@@ -1,13 +1,3 @@
 {
-  "mcpServers": {
-    "hwp-mcp": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "hwp-mcp"
-      ],
-      "env": {}
-    }
-  }
+  "mcpServers": {}
 }
