@@ -297,6 +297,34 @@ NUMERIC_EXPORT_FIELDS = {"cntrctPrceAmt"}
 ACCOUNTING_NUMBER_FORMAT = '_-* #,##0_-;-* #,##0_-;_-* "-"_-;_-@_-'
 
 
+def _timestamped_path(path):
+    root, ext = os.path.splitext(path)
+    return f"{root}_{datetime.datetime.now().strftime('%H%M%S')}{ext}"
+
+
+def _write_with_fallback(write_fn, path, log):
+    """write_fn(경로)로 저장을 시도한다. 잠겨 있어 실패하면 타임스탬프를 붙인
+    새 파일명으로 한 번 더 시도한다 (원인을 진단하는 대신 확실히 진행되게 한다)."""
+    try:
+        write_fn(path)
+        return path
+    except PermissionError:
+        fallback = _timestamped_path(path)
+        log(
+            f"'{path}' 파일을 저장할 수 없어(다른 프로그램에서 사용 중이거나 잠겨 있을 수 있음) "
+            f"'{fallback}'(으)로 대신 저장합니다."
+        )
+        try:
+            write_fn(fallback)
+        except PermissionError as e:
+            raise PermissionError(
+                f"'{fallback}'로도 저장할 수 없습니다. 해당 폴더에 쓰기 권한이 없거나 "
+                "(예: OneDrive 동기화 중, 보안 프로그램 차단 등) 폴더 자체의 문제일 수 있습니다. "
+                "다른 폴더(예: C:\\Temp)로 --output 경로를 바꿔서 시도해보세요."
+            ) from e
+        return fallback
+
+
 def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_path, log=print):
     """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
     try:
@@ -346,32 +374,23 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
         summary.append(["조회 기간", f"{begin_date} ~ {end_date}"])
         summary.append(["매칭 물품 수", len(camera_items)])
 
-        try:
-            wb.save(path)
-        except PermissionError as e:
-            raise PermissionError(
-                f"'{path}' 파일이 다른 프로그램(엑셀 등)에서 열려있어 저장할 수 없습니다. "
-                "그 파일을 닫고 다시 시도해주세요."
-            ) from e
-        log(f"\n엑셀 파일로 저장했습니다: {path}")
-        return path
+        saved_path = _write_with_fallback(wb.save, path, log)
+        log(f"\n엑셀 파일로 저장했습니다: {saved_path}")
+        return saved_path
     else:
         path = output_path
         if not path.lower().endswith(".csv"):
             path = os.path.splitext(path)[0] + ".csv"
-        try:
-            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        def save_csv(p):
+            with open(p, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
                 writer.writerow(headers)
                 writer.writerows(rows)
-        except PermissionError as e:
-            raise PermissionError(
-                f"'{path}' 파일이 다른 프로그램(엑셀 등)에서 열려있어 저장할 수 없습니다. "
-                "그 파일을 닫고 다시 시도해주세요."
-            ) from e
-        log(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {path}")
+
+        saved_path = _write_with_fallback(save_csv, path, log)
+        log(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {saved_path}")
         log("엑셀(.xlsx)로 저장하려면 'pip install openpyxl' 실행 후 다시 실행하세요.")
-        return path
+        return saved_path
 
 
 def main():
