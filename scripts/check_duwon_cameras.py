@@ -32,9 +32,6 @@ BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 
 # 후보 오퍼레이션 목록 (문서로 확인 전까지는 추정치이므로 순서대로 시도한다)
 CANDIDATE_OPERATIONS = [
-    "getMASCntrctPrdctInfoList",             # 다수공급자계약 물품 목록
-    "getShoppingMallPrdctInfoList",          # 종합쇼핑몰 물품 목록 (통합)
-    "getUcntrctPrdctInfoList",               # 일반단가/우수제품 물품 목록
     "getThptyUnyPrceBassApnetPrdlstInfoList",  # 제3자단가계약 기준단가 적용 물품 목록
 ]
 
@@ -83,12 +80,12 @@ def extract_items(payload: dict):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corp-name", default="두원전자통신", help="조회할 업체명")
-    parser.add_argument("--keyword", default="카메라", help="품명/규격에서 필터링할 키워드")
+    parser.add_argument("--keyword", default="보안용카메라", help="품명/규격에서 필터링할 키워드")
     parser.add_argument("--num-of-rows", type=int, default=999)
     parser.add_argument(
         "--begin-date",
-        default="20000101",
-        help="조회 시작일자(YYYYMMDD). 일부 오퍼레이션은 필수일 수 있음",
+        default=(datetime.date.today() - datetime.timedelta(days=365)).strftime("%Y%m%d"),
+        help="조회 시작일자(YYYYMMDD). 기본값: 오늘로부터 1년 전",
     )
     parser.add_argument(
         "--end-date",
