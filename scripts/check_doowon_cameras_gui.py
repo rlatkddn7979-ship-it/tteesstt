@@ -15,7 +15,7 @@ import os
 import queue
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import messagebox, scrolledtext, ttk
 
 import check_doowon_cameras as core
 
@@ -43,7 +43,6 @@ class App(tk.Tk):
             value=(today - datetime.timedelta(days=365)).strftime("%Y%m%d")
         )
         self.end_date_var = tk.StringVar(value=today.strftime("%Y%m%d"))
-        self.output_var = tk.StringVar(value="두원전자통신_보안용카메라.xlsx")
         self.service_key_var = tk.StringVar(value=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
 
         rows = [
@@ -64,15 +63,6 @@ class App(tk.Tk):
             row=r, column=1, sticky="we", pady=3, columnspan=2
         )
 
-        r += 1
-        ttk.Label(form, text="저장 파일").grid(row=r, column=0, sticky="w", pady=3)
-        ttk.Entry(form, textvariable=self.output_var, width=32).grid(
-            row=r, column=1, sticky="we", pady=3
-        )
-        ttk.Button(form, text="찾아보기", command=self._browse_output).grid(
-            row=r, column=2, sticky="w", padx=5
-        )
-
         form.columnconfigure(1, weight=1)
 
         r += 1
@@ -89,15 +79,6 @@ class App(tk.Tk):
         ttk.Label(frame, text="진행 로그").pack(anchor="w")
         self.log_widget = scrolledtext.ScrolledText(frame, state="disabled", wrap="word")
         self.log_widget.pack(fill="both", expand=True)
-
-    def _browse_output(self):
-        path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel", "*.xlsx"), ("CSV", "*.csv"), ("모든 파일", "*.*")],
-            initialfile=self.output_var.get(),
-        )
-        if path:
-            self.output_var.set(path)
 
     def _log(self, message):
         # 백그라운드 스레드에서 호출되므로 큐에 넣고 메인 스레드에서 위젯에 반영한다.
@@ -123,7 +104,6 @@ class App(tk.Tk):
         keyword = self.keyword_var.get().strip()
         begin_date = self.begin_date_var.get().strip()
         end_date = self.end_date_var.get().strip()
-        output_path = self.output_var.get().strip()
         service_key = self.service_key_var.get().strip()
 
         if not service_key:
@@ -141,18 +121,20 @@ class App(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_in_background,
-            args=(corp_name, keyword, begin_date, end_date, service_key, output_path),
+            args=(corp_name, keyword, begin_date, end_date, service_key),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_in_background(self, corp_name, keyword, begin_date, end_date, service_key, output_path):
+    def _run_in_background(self, corp_name, keyword, begin_date, end_date, service_key):
         try:
             result = core.run_query(
                 corp_name, keyword, begin_date, end_date, service_key, log=self._log
             )
             saved_path = None
             if result["ok"]:
+                # 파일명은 사용자가 입력하지 않고 '업체명_키워드_실행시각'으로 자동 생성한다.
+                output_path = core.default_output_filename(corp_name, keyword)
                 saved_path = core.write_output(
                     result["camera_items"], corp_name, keyword, begin_date, end_date,
                     output_path, log=self._log,

@@ -16,7 +16,8 @@ GUI로 실행하려면 scripts/check_doowon_cameras_gui.py 를 실행하세요.
 
 서비스키는 절대 코드에 하드코딩하거나 커밋하지 마세요. 환경변수로만 주입합니다.
 
-매칭된 물품 목록은 --output으로 지정한 경로(기본값: 두원전자통신_보안용카메라.xlsx)에 저장됩니다.
+매칭된 물품 목록은 --output으로 지정한 경로에 저장됩니다. --output을 생략하면
+"업체명_키워드_실행시각.xlsx" 형태로 자동 생성됩니다 (GUI는 항상 이 방식으로만 저장).
 openpyxl이 설치되어 있으면 엑셀(.xlsx)로, 없으면 같은 이름의 .csv로 대신 저장합니다.
 엑셀로 저장하려면: pip install openpyxl
 
@@ -297,6 +298,22 @@ NUMERIC_EXPORT_FIELDS = {"cntrctPrceAmt"}
 ACCOUNTING_NUMBER_FORMAT = '_-* #,##0_-;-* #,##0_-;_-* "-"_-;_-@_-'
 
 
+# Windows/macOS/Linux 파일명에 쓸 수 없는 문자들.
+INVALID_FILENAME_CHARS = '\\/:*?"<>|'
+
+
+def _sanitize_filename_part(text: str) -> str:
+    return "".join(c for c in text if c not in INVALID_FILENAME_CHARS).strip()
+
+
+def default_output_filename(corp_name: str, keyword: str, ext: str = ".xlsx") -> str:
+    """'업체명_키워드_실행시각' 형태의 파일명을 만든다."""
+    corp = _sanitize_filename_part(corp_name) or "업체"
+    kw = _sanitize_filename_part(keyword) or "키워드"
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{corp}_{kw}_{timestamp}{ext}"
+
+
 def _timestamped_path(path):
     root, ext = os.path.splitext(path)
     return f"{root}_{datetime.datetime.now().strftime('%H%M%S')}{ext}"
@@ -416,8 +433,9 @@ def main():
     )
     parser.add_argument(
         "--output",
-        default="두원전자통신_보안용카메라.xlsx",
-        help="결과를 저장할 엑셀 파일 경로 (openpyxl 미설치 시 같은 이름의 .csv로 대신 저장)",
+        default=None,
+        help="결과를 저장할 엑셀 파일 경로 (openpyxl 미설치 시 같은 이름의 .csv로 대신 저장). "
+             "생략하면 '업체명_키워드_실행시각.xlsx'로 자동 생성",
     )
     args = parser.parse_args()
 
@@ -439,13 +457,14 @@ def main():
     if not result["ok"]:
         sys.exit(2)
 
+    output_path = args.output or default_output_filename(args.corp_name, args.keyword)
     write_output(
         result["camera_items"],
         args.corp_name,
         args.keyword,
         args.begin_date,
         args.end_date,
-        args.output,
+        output_path,
     )
 
 
