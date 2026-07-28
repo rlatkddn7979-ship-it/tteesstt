@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-check_duwon_cameras.py를 위한 간단한 GUI.
+check_doowon_cameras.py를 위한 간단한 GUI.
 
 회사명/키워드/조회기간/서비스키/저장 파일을 화면에서 입력하고
 "조회 시작" 버튼을 누르면 결과와 진행 로그를 창 안에서 볼 수 있다.
 파이썬 표준 라이브러리(tkinter)만 사용하므로 별도 설치가 필요 없다.
 
 실행:
-    python3 scripts/check_duwon_cameras_gui.py
+    python3 scripts/check_doowon_cameras_gui.py
 """
 
 import datetime
@@ -17,7 +17,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-import check_duwon_cameras as core
+import check_doowon_cameras as core
 
 
 class App(tk.Tk):

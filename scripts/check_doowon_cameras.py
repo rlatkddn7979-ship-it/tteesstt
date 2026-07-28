@@ -8,11 +8,11 @@ Endpoint: https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService
 
 사용법 (CLI):
     export DATA_GO_KR_SERVICE_KEY="발급받은 서비스키(디코딩된 일반 인증키)"
-    python3 scripts/check_duwon_cameras.py
-    python3 scripts/check_duwon_cameras.py --corp-name "다른업체명" --keyword "CCTV"
-    python3 scripts/check_duwon_cameras.py --output 결과.xlsx
+    python3 scripts/check_doowon_cameras.py
+    python3 scripts/check_doowon_cameras.py --corp-name "다른업체명" --keyword "CCTV"
+    python3 scripts/check_doowon_cameras.py --output 결과.xlsx
 
-GUI로 실행하려면 scripts/check_duwon_cameras_gui.py 를 실행하세요.
+GUI로 실행하려면 scripts/check_doowon_cameras_gui.py 를 실행하세요.
 
 서비스키는 절대 코드에 하드코딩하거나 커밋하지 마세요. 환경변수로만 주입합니다.
 
@@ -292,6 +292,11 @@ def run_query(
     }
 
 
+# 이 필드는 문자열이 아니라 숫자로 저장하고, 엑셀에서 천단위 구분(회계 서식)으로 표시한다.
+NUMERIC_EXPORT_FIELDS = {"cntrctPrceAmt"}
+ACCOUNTING_NUMBER_FORMAT = '_-* #,##0_-;-* #,##0_-;_-* "-"_-;_-@_-'
+
+
 def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_path, log=print):
     """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
     try:
@@ -299,7 +304,16 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
     except ImportError:
         openpyxl = None
 
-    rows = [[item.get(field, "") for _, field in EXPORT_COLUMNS] for item in camera_items]
+    def cell_value(item, field):
+        value = item.get(field, "")
+        if field in NUMERIC_EXPORT_FIELDS and value not in ("", None):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+        return value
+
+    rows = [[cell_value(item, field) for _, field in EXPORT_COLUMNS] for item in camera_items]
     headers = [header for header, _ in EXPORT_COLUMNS]
 
     if openpyxl is not None:
@@ -313,6 +327,15 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
         ws.append(headers)
         for row in rows:
             ws.append(row)
+
+        numeric_cols = [
+            col_idx for col_idx, (_, field) in enumerate(EXPORT_COLUMNS, start=1)
+            if field in NUMERIC_EXPORT_FIELDS
+        ]
+        for col_idx in numeric_cols:
+            for row_idx in range(2, len(rows) + 2):
+                ws.cell(row=row_idx, column=col_idx).number_format = ACCOUNTING_NUMBER_FORMAT
+
         for col_idx, header in enumerate(headers, start=1):
             width = max(len(header), *(len(str(r[col_idx - 1])) for r in rows)) if rows else len(header)
             ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(width + 2, 60)
