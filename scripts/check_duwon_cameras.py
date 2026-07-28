@@ -31,6 +31,7 @@ import datetime
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -74,6 +75,10 @@ def fetch(
         except TimeoutError as e:
             last_error = e
             print(f"  (타임아웃, {attempt}/{retries}번째 시도 실패: {e})")
+            if attempt < retries:
+                wait = 5 * attempt
+                print(f"  {wait}초 대기 후 재시도합니다...")
+                time.sleep(wait)
     else:
         raise last_error
 
