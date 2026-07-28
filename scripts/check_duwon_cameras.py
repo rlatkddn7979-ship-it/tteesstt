@@ -49,6 +49,10 @@ CANDIDATE_OPERATIONS = [
 # 응답에서 품명(카메라 종류 구분)으로 실제 확인된 필드
 NAME_FIELD = "prdctClsfcNoNm"  # 물품분류번호명 (품명)
 
+# 키워드 검색 대상 필드. 품명(대분류)만으로는 "안내전광판"처럼 더 구체적인 단어가
+# 걸리지 않을 수 있어서, 물품식별번호명(모델/규격 설명)도 같이 검사한다.
+KEYWORD_FIELDS = [NAME_FIELD, "prdctIdntNoNm"]
+
 EXPORT_COLUMNS = [
     ("계약업체명", "cntrctCorpNm"),
     ("품명", "prdctClsfcNoNm"),
@@ -254,7 +258,11 @@ def run_query(
 
     name_field = NAME_FIELD
     all_categories = sorted({str(item.get(name_field, "")) for item in all_items})
-    camera_items = [item for item in all_items if keyword in str(item.get(name_field, ""))]
+
+    def matches_keyword(item):
+        return any(keyword in str(item.get(f, "")) for f in KEYWORD_FIELDS)
+
+    camera_items = [item for item in all_items if matches_keyword(item)]
     distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
     log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
@@ -262,10 +270,10 @@ def run_query(
     for category in all_categories:
         log(f"  - {category}")
 
-    log(f"\n'{keyword}' 포함 물품 수: {len(camera_items)}")
+    log(f"\n'{keyword}'({'/'.join(KEYWORD_FIELDS)} 중 포함) 물품 수: {len(camera_items)}")
     if not camera_items:
         log(
-            f"'{keyword}'와(과) 일치하는 품명이 없습니다. "
+            f"'{keyword}'와(과) 일치하는 품명/규격이 없습니다. "
             "위 전체 품명 목록에서 정확한 표기를 확인해 --keyword 값을 맞춰보세요. "
             "조회 기간(--begin-date/--end-date) 밖의 계약이라 안 보일 수도 있습니다."
         )
