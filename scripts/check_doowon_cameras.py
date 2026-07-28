@@ -51,7 +51,7 @@ NAME_FIELD = "prdctClsfcNoNm"  # 물품분류번호명 (품명)
 
 # 키워드 검색 대상 필드. 품명(대분류)만으로는 "안내전광판"처럼 더 구체적인 단어가
 # 걸리지 않을 수 있어서, 물품식별번호명(모델/규격 설명)도 같이 검사한다.
-KEYWORD_FIELDS = [NAME_FIELD, "prdctIdntNoNm"]
+KEYWORD_FIELDS = [NAME_FIELD, "prdctSpecNm"]
 
 EXPORT_COLUMNS = [
     ("계약업체명", "cntrctCorpNm"),
