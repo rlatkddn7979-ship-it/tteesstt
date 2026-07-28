@@ -243,13 +243,22 @@ def main():
     camera_items = [
         item for item in all_items if args.keyword in str(item.get(name_field, ""))
     ]
-    distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
     print(f"\n'{args.corp_name}' 전체 등록 물품 수: {len(all_items)}")
-    print(f"'{args.keyword}' 포함 물품 수: {len(camera_items)}")
-    print(f"'{args.keyword}' 관련 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
-    for name in distinct_names:
-        print(f"  - {name}")
+    print(f"'{args.keyword}'({name_field}) 포함 물품 수: {len(camera_items)}")
+
+    # name_field(prdctClsfcNoNm)는 '보안용카메라' 같은 대분류 품명이라 전부 동일할 수 있다.
+    # 실제 "몇 종류"는 물품식별번호(prdctIdntNo, 모델/규격 단위 고유 식별자)로 세는 것이
+    # 더 정확하므로 그 기준으로도 집계한다.
+    model_field = "prdctIdntNo" if camera_items and "prdctIdntNo" in camera_items[0] else name_field
+    distinct_models = {}
+    for item in camera_items:
+        key = str(item.get(model_field, ""))
+        distinct_models.setdefault(key, item.get("prdctSpecNm") or item.get(name_field, ""))
+
+    print(f"'{args.keyword}' 관련 물품 종류(고유 {model_field} 개수): {len(distinct_models)}")
+    for model_id, spec in sorted(distinct_models.items()):
+        print(f"  - [{model_id}] {spec}")
 
 
 if __name__ == "__main__":
