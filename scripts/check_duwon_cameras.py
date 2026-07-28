@@ -79,6 +79,9 @@ def fetch(
     url = f"{BASE_URL}/{operation}?{urllib.parse.urlencode(query)}"
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
 
+    # 502/503/504는 게이트웨이/서버가 일시적으로 과부하일 때 나는 오류라 재시도할 가치가 있다.
+    RETRYABLE_HTTP_CODES = (502, 503, 504)
+
     last_error = None
     for attempt in range(1, retries + 1):
         try:
@@ -88,10 +91,17 @@ def fetch(
         except TimeoutError as e:
             last_error = e
             log(f"  (타임아웃, {attempt}/{retries}번째 시도 실패: {e})")
-            if attempt < retries:
-                wait = 5 * attempt
-                log(f"  {wait}초 대기 후 재시도합니다...")
-                time.sleep(wait)
+        except urllib.error.HTTPError as e:
+            if e.code not in RETRYABLE_HTTP_CODES:
+                raise
+            last_error = e
+            log(f"  (HTTP {e.code} {e.reason}, {attempt}/{retries}번째 시도 실패)")
+        else:
+            continue
+        if attempt < retries:
+            wait = 5 * attempt
+            log(f"  {wait}초 대기 후 재시도합니다...")
+            time.sleep(wait)
     else:
         raise last_error
 
@@ -243,11 +253,22 @@ def run_query(
                 "camera_items": [], "distinct_names": [], "name_field": None}
 
     name_field = NAME_FIELD
+    all_categories = sorted({str(item.get(name_field, "")) for item in all_items})
     camera_items = [item for item in all_items if keyword in str(item.get(name_field, ""))]
     distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
     log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
-    log(f"'{keyword}' 포함 물품 수: {len(camera_items)}")
+    log(f"조회 기간 내 등록된 전체 품명({name_field}) 종류 ({len(all_categories)}개):")
+    for category in all_categories:
+        log(f"  - {category}")
+
+    log(f"\n'{keyword}' 포함 물품 수: {len(camera_items)}")
+    if not camera_items:
+        log(
+            f"'{keyword}'와(과) 일치하는 품명이 없습니다. "
+            "위 전체 품명 목록에서 정확한 표기를 확인해 --keyword 값을 맞춰보세요. "
+            "조회 기간(--begin-date/--end-date) 밖의 계약이라 안 보일 수도 있습니다."
+        )
     log(f"'{keyword}' 관련 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
     for name in distinct_names:
         log(f"  - {name}")
