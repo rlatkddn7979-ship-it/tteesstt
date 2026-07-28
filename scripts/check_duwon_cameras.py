@@ -46,13 +46,8 @@ CANDIDATE_OPERATIONS = [
     "getThptyUcntrctPrdctInfoList",  # 제3자단가계약 물품 목록
 ]
 
-# 응답에서 "카메라 종류"를 식별할 때 후보가 될 필드명들
-NAME_FIELD_CANDIDATES = [
-    "prdctIdntNoNm",  # 물품식별번호명 (모델/규격명)
-    "prdctClsfcNoNm",  # 물품분류번호명 (품명)
-    "dtilPrdctClsfcNoNm",
-    "prdctNm",
-]
+# 응답에서 품명(카메라 종류 구분)으로 실제 확인된 필드
+NAME_FIELD = "prdctClsfcNoNm"  # 물품분류번호명 (품명)
 
 EXPORT_COLUMNS = [
     ("계약업체명", "cntrctCorpNm"),
@@ -241,15 +236,13 @@ def run_query(
         return {"ok": False, "error": "no_matching_corp", "all_items": [],
                 "camera_items": [], "distinct_names": [], "name_field": None}
 
-    name_field = next((f for f in NAME_FIELD_CANDIDATES if f in all_items[0]), None)
-    if not name_field:
-        log("품명/규격 관련 필드를 찾지 못했습니다. item 전체 필드 목록:")
+    if NAME_FIELD not in all_items[0]:
+        log(f"'{NAME_FIELD}' 필드를 찾지 못했습니다. item 전체 필드 목록:")
         log(str(list(all_items[0].keys())))
         return {"ok": False, "error": "no_name_field", "all_items": all_items,
                 "camera_items": [], "distinct_names": [], "name_field": None}
 
-    log(f"품명 필드로 '{name_field}' 사용")
-
+    name_field = NAME_FIELD
     camera_items = [item for item in all_items if keyword in str(item.get(name_field, ""))]
     distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
