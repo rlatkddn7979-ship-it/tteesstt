@@ -36,6 +36,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 
@@ -315,8 +316,11 @@ def default_output_filename(corp_name: str, keyword: str, ext: str = ".xlsx") ->
 
 
 def _timestamped_path(path):
+    # 파일명에 이미 실행 시각이 들어있을 수 있으므로(자동 생성 파일명), 짧은 임의 문자열을
+    # 붙여 항상 새로운 이름이 되게 한다.
     root, ext = os.path.splitext(path)
-    return f"{root}_{datetime.datetime.now().strftime('%H%M%S')}{ext}"
+    suffix = uuid.uuid4().hex[:6]
+    return f"{root}_retry{suffix}{ext}"
 
 
 def _write_with_fallback(write_fn, path, log):
