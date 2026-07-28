@@ -47,13 +47,30 @@ NAME_FIELD_CANDIDATES = [
 ]
 
 
-def fetch(operation: str, service_key: str, params: dict, timeout: int = 20) -> dict:
+def fetch(
+    operation: str,
+    service_key: str,
+    params: dict,
+    timeout: int = 60,
+    retries: int = 3,
+) -> dict:
     query = dict(params)
     query["serviceKey"] = service_key
     url = f"{BASE_URL}/{operation}?{urllib.parse.urlencode(query)}"
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
+
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+            break
+        except TimeoutError as e:
+            last_error = e
+            print(f"  (타임아웃, {attempt}/{retries}번째 시도 실패: {e})")
+    else:
+        raise last_error
+
     try:
         return {"raw": raw, "json": json.loads(raw)}
     except json.JSONDecodeError:
@@ -129,6 +146,9 @@ def main():
                 break
             except urllib.error.URLError as e:
                 print(f"네트워크 오류: {e.reason}")
+                break
+            except TimeoutError as e:
+                print(f"타임아웃 (재시도 모두 실패): {e}")
                 break
 
             payload = result["json"]
