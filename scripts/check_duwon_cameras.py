@@ -30,6 +30,9 @@ import urllib.request
 
 BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 
+# cntrctCorpNm 필터가 서버에서 무시되어 전국 데이터를 전부 받아오게 되는 사고를 막기 위한 안전장치.
+MAX_ITEMS = 5000
+
 # 후보 오퍼레이션 목록 (문서로 확인 전까지는 추정치이므로 순서대로 시도한다)
 CANDIDATE_OPERATIONS = [
     "getThptyUcntrctPrdctInfoList",  # 제3자단가계약 물품 목록
@@ -101,10 +104,9 @@ def main():
         sys.exit(1)
 
     base_params = {
-        "pageNo": "1",
         "numOfRows": str(args.num_of_rows),
         "type": "json",
-        "corpNm": args.corp_name,
+        "cntrctCorpNm": args.corp_name,
         "inqryDiv": "1",
         "inqryBgnDate": args.begin_date,
         "inqryEndDate": args.end_date,
@@ -115,38 +117,79 @@ def main():
 
     for operation in CANDIDATE_OPERATIONS:
         print(f"\n=== 오퍼레이션 시도: {operation} ===")
-        try:
-            result = fetch(operation, service_key, base_params)
-        except urllib.error.HTTPError as e:
-            print(f"HTTP 오류: {e.code} {e.reason}")
-            continue
-        except urllib.error.URLError as e:
-            print(f"네트워크 오류: {e.reason}")
-            continue
+        page_no = 1
+        operation_items = []
+        total_count = None
+        while True:
+            params = dict(base_params, pageNo=str(page_no))
+            try:
+                result = fetch(operation, service_key, params)
+            except urllib.error.HTTPError as e:
+                print(f"HTTP 오류: {e.code} {e.reason}")
+                break
+            except urllib.error.URLError as e:
+                print(f"네트워크 오류: {e.reason}")
+                break
 
-        payload = result["json"]
-        if payload is None:
-            print("JSON이 아닌 응답 (앞부분 500자):")
-            print(result["raw"][:500])
-            continue
+            payload = result["json"]
+            if payload is None:
+                print("JSON이 아닌 응답 (앞부분 500자):")
+                print(result["raw"][:500])
+                break
 
-        header = payload.get("response", {}).get("header", {})
-        result_code = header.get("resultCode")
-        result_msg = header.get("resultMsg")
-        print(f"resultCode={result_code} resultMsg={result_msg}")
+            header = payload.get("response", {}).get("header", {})
+            result_code = header.get("resultCode")
+            result_msg = header.get("resultMsg")
+            print(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
 
-        if result_code not in ("00", "0", None):
-            # 에러 메시지 자체가 필수 파라미터/오퍼레이션 존재 여부에 대한 단서가 된다.
-            continue
+            if result_code not in ("00", "0", None):
+                # 에러 메시지 자체가 필수 파라미터/오퍼레이션 존재 여부에 대한 단서가 된다.
+                break
 
-        items = extract_items(payload)
-        print(f"조회된 item 수: {len(items)}")
-        if items:
-            print("첫 item 샘플:")
-            print(json.dumps(items[0], ensure_ascii=False, indent=2))
-            working_operation = operation
-            all_items = items
+            body = payload.get("response", {}).get("body", {})
+            if total_count is None:
+                total_count = body.get("totalCount")
+            items = extract_items(payload)
+            print(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
+            if not items:
+                break
+            if page_no == 1:
+                print("첫 item 샘플:")
+                print(json.dumps(items[0], ensure_ascii=False, indent=2))
+                working_operation = operation
+            operation_items.extend(items)
+
+            if total_count is not None and len(operation_items) >= int(total_count):
+                break
+            if len(items) < args.num_of_rows:
+                break
+            if len(operation_items) >= MAX_ITEMS:
+                print(
+                    f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다. "
+                    "cntrctCorpNm 필터가 서버에서 적용되지 않았을 수 있습니다 "
+                    "(전체 데이터를 받아오는 중일 가능성)."
+                )
+                break
+            page_no += 1
+
+        if working_operation:
+            all_items = operation_items
             break
+
+    # 서버가 cntrctCorpNm 파라미터를 무시하고 전체 목록을 반환하는 경우에 대비해
+    # 응답에 실제로 들어있는 회사명 필드로 다시 한번 걸러낸다.
+    corp_field = next(
+        (f for f in ("cntrctCorpNm", "corpNm") if all_items and f in all_items[0]), None
+    )
+    if corp_field:
+        before = len(all_items)
+        all_items = [
+            item for item in all_items if args.corp_name in str(item.get(corp_field, ""))
+        ]
+        print(
+            f"\n'{corp_field}' 필드 기준으로 '{args.corp_name}' 클라이언트측 재필터링: "
+            f"{before}건 -> {len(all_items)}건"
+        )
 
     if not working_operation:
         print(
@@ -157,6 +200,14 @@ def main():
         sys.exit(2)
 
     print(f"\n성공한 오퍼레이션: {working_operation}")
+
+    if not all_items:
+        print(f"'{args.corp_name}' 이름과 일치하는 등록 물품이 없습니다.")
+        print(
+            "회사명 표기가 다를 수 있습니다(예: '(주)두원전자통신' 등). "
+            "--corp-name 값을 바꿔서 다시 시도해보세요."
+        )
+        sys.exit(4)
 
     # 카메라 종류 집계: 이름 계열 필드 중 실제로 존재하는 것을 찾아서 키워드로 필터링
     name_field = next(
