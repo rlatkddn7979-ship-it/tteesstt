@@ -32,7 +32,7 @@ BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 
 # 후보 오퍼레이션 목록 (문서로 확인 전까지는 추정치이므로 순서대로 시도한다)
 CANDIDATE_OPERATIONS = [
-    "getThptyUnyPrceBassApnetPrdlstInfoList",  # 제3자단가계약 기준단가 적용 물품 목록
+    "getThptyUcntrctPrdctInfoList",  # 제3자단가계약 물품 목록
 ]
 
 # 응답에서 "카메라 종류"를 식별할 때 후보가 될 필드명들 (문서 확인 전 추정)
