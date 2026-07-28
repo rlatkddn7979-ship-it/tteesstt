@@ -6,11 +6,13 @@
 data.go.kr 활용신청: https://www.data.go.kr/data/15129471/openapi.do
 Endpoint: https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService
 
-사용법:
+사용법 (CLI):
     export DATA_GO_KR_SERVICE_KEY="발급받은 서비스키(디코딩된 일반 인증키)"
     python3 scripts/check_duwon_cameras.py
     python3 scripts/check_duwon_cameras.py --corp-name "다른업체명" --keyword "CCTV"
     python3 scripts/check_duwon_cameras.py --output 결과.xlsx
+
+GUI로 실행하려면 scripts/check_duwon_cameras_gui.py 를 실행하세요.
 
 서비스키는 절대 코드에 하드코딩하거나 커밋하지 마세요. 환경변수로만 주입합니다.
 
@@ -19,10 +21,8 @@ openpyxl이 설치되어 있으면 엑셀(.xlsx)로, 없으면 같은 이름의 
 엑셀로 저장하려면: pip install openpyxl
 
 주의: 실제 오퍼레이션명/요청·응답 필드명은 data.go.kr의 참고문서
-("조달청_OpenAPI참고자료_조달청 나라장터쇼핑몰물품목록정보서비스 1.3.docx")로 검증되지 않았습니다.
-이 스크립트는 여러 후보 오퍼레이션을 순서대로 호출해보면서, 어떤 오퍼레이션이
-실제로 서비스되는지/필수 파라미터가 무엇인지 응답(에러 메시지 포함)을 그대로 출력합니다.
-성공하는 오퍼레이션을 찾으면 그 결과로 카메라 종류 수를 집계합니다.
+("조달청_OpenAPI참고자료_조달청 나라장터쇼핑몰물품목록정보서비스 1.3.docx")로 확인된 값을 사용합니다
+(getThptyUcntrctPrdctInfoList, cntrctCorpNm).
 """
 
 import argparse
@@ -32,6 +32,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -40,17 +41,33 @@ BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 # cntrctCorpNm 필터가 서버에서 무시되어 전국 데이터를 전부 받아오게 되는 사고를 막기 위한 안전장치.
 MAX_ITEMS = 5000
 
-# 후보 오퍼레이션 목록 (문서로 확인 전까지는 추정치이므로 순서대로 시도한다)
+# 후보 오퍼레이션 목록 (실제로 확인된 getThptyUcntrctPrdctInfoList를 우선 사용)
 CANDIDATE_OPERATIONS = [
     "getThptyUcntrctPrdctInfoList",  # 제3자단가계약 물품 목록
 ]
 
-# 응답에서 "카메라 종류"를 식별할 때 후보가 될 필드명들 (문서 확인 전 추정)
+# 응답에서 "카메라 종류"를 식별할 때 후보가 될 필드명들
 NAME_FIELD_CANDIDATES = [
     "prdctIdntNoNm",  # 물품식별번호명 (모델/규격명)
     "prdctClsfcNoNm",  # 물품분류번호명 (품명)
     "dtilPrdctClsfcNoNm",
     "prdctNm",
+]
+
+EXPORT_COLUMNS = [
+    ("계약업체명", "cntrctCorpNm"),
+    ("품명", "prdctClsfcNoNm"),
+    ("규격/모델명", "prdctSpecNm"),
+    ("물품식별번호", "prdctIdntNo"),
+    ("제조사", "prdctMakrNm"),
+    ("원산지", "prdctOrgplceNm"),
+    ("계약방법", "cntrctMthdNm"),
+    ("계약번호", "shopngCntrctNo"),
+    ("계약일자", "cntrctDate"),
+    ("계약시작일", "cntrctBgnDate"),
+    ("계약종료일", "cntrctEndDate"),
+    ("계약금액", "cntrctPrceAmt"),
+    ("단위", "prdctUnit"),
 ]
 
 
@@ -60,6 +77,7 @@ def fetch(
     params: dict,
     timeout: int = 60,
     retries: int = 3,
+    log=print,
 ) -> dict:
     query = dict(params)
     query["serviceKey"] = service_key
@@ -74,10 +92,10 @@ def fetch(
             break
         except TimeoutError as e:
             last_error = e
-            print(f"  (타임아웃, {attempt}/{retries}번째 시도 실패: {e})")
+            log(f"  (타임아웃, {attempt}/{retries}번째 시도 실패: {e})")
             if attempt < retries:
                 wait = 5 * attempt
-                print(f"  {wait}초 대기 후 재시도합니다...")
+                log(f"  {wait}초 대기 후 재시도합니다...")
                 time.sleep(wait)
     else:
         raise last_error
@@ -108,6 +126,196 @@ def extract_items(payload: dict):
     return []
 
 
+def run_query(
+    corp_name: str,
+    keyword: str,
+    begin_date: str,
+    end_date: str,
+    service_key: str,
+    num_of_rows: int = 999,
+    log=print,
+) -> dict:
+    """API를 조회하고 회사명/키워드로 필터링한 결과를 dict로 반환한다.
+
+    반환값: {"ok": bool, "error": str|None, "all_items": [...],
+             "camera_items": [...], "distinct_names": [...], "name_field": str|None}
+    """
+    base_params = {
+        "numOfRows": str(num_of_rows),
+        "type": "json",
+        "cntrctCorpNm": corp_name,
+        "inqryDiv": "1",
+        "inqryBgnDate": begin_date,
+        "inqryEndDate": end_date,
+    }
+
+    working_operation = None
+    all_items = []
+
+    for operation in CANDIDATE_OPERATIONS:
+        log(f"\n=== 오퍼레이션 시도: {operation} ===")
+        page_no = 1
+        operation_items = []
+        total_count = None
+        while True:
+            params = dict(base_params, pageNo=str(page_no))
+            try:
+                result = fetch(operation, service_key, params, log=log)
+            except urllib.error.HTTPError as e:
+                log(f"HTTP 오류: {e.code} {e.reason}")
+                break
+            except urllib.error.URLError as e:
+                log(f"네트워크 오류: {e.reason}")
+                break
+            except TimeoutError as e:
+                log(f"타임아웃 (재시도 모두 실패): {e}")
+                break
+
+            payload = result["json"]
+            if payload is None:
+                log("JSON이 아닌 응답 (앞부분 500자):")
+                log(result["raw"][:500])
+                break
+
+            header = payload.get("response", {}).get("header", {})
+            result_code = header.get("resultCode")
+            result_msg = header.get("resultMsg")
+            log(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
+
+            if result_code not in ("00", "0", None):
+                break
+
+            body = payload.get("response", {}).get("body", {})
+            if total_count is None:
+                total_count = body.get("totalCount")
+            items = extract_items(payload)
+            log(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
+            if not items:
+                break
+            if page_no == 1:
+                working_operation = operation
+            operation_items.extend(items)
+
+            if total_count is not None and len(operation_items) >= int(total_count):
+                break
+            if len(items) < num_of_rows:
+                break
+            if len(operation_items) >= MAX_ITEMS:
+                log(
+                    f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다. "
+                    "cntrctCorpNm 필터가 서버에서 적용되지 않았을 수 있습니다."
+                )
+                break
+            page_no += 1
+
+        if working_operation:
+            all_items = operation_items
+            break
+
+    # 서버가 cntrctCorpNm 파라미터를 무시하고 전체 목록을 반환하는 경우에 대비해
+    # 응답에 실제로 들어있는 회사명 필드로 다시 한번 걸러낸다.
+    corp_field = next(
+        (f for f in ("cntrctCorpNm", "corpNm") if all_items and f in all_items[0]), None
+    )
+    if corp_field:
+        before = len(all_items)
+        all_items = [item for item in all_items if corp_name in str(item.get(corp_field, ""))]
+        log(
+            f"\n'{corp_field}' 필드 기준으로 '{corp_name}' 클라이언트측 재필터링: "
+            f"{before}건 -> {len(all_items)}건"
+        )
+
+    if not working_operation:
+        log(
+            "\n어떤 오퍼레이션도 정상 응답(item 포함)을 주지 않았습니다. "
+            "resultCode/resultMsg를 참고해서 파라미터를 조정해주세요."
+        )
+        return {"ok": False, "error": "no_working_operation", "all_items": [],
+                "camera_items": [], "distinct_names": [], "name_field": None}
+
+    log(f"\n성공한 오퍼레이션: {working_operation}")
+
+    if not all_items:
+        log(f"'{corp_name}' 이름과 일치하는 등록 물품이 없습니다.")
+        log("회사명 표기가 다를 수 있습니다(예: '(주)두원전자통신' 등). 다른 표기로 다시 시도해보세요.")
+        return {"ok": False, "error": "no_matching_corp", "all_items": [],
+                "camera_items": [], "distinct_names": [], "name_field": None}
+
+    name_field = next((f for f in NAME_FIELD_CANDIDATES if f in all_items[0]), None)
+    if not name_field:
+        log("품명/규격 관련 필드를 찾지 못했습니다. item 전체 필드 목록:")
+        log(str(list(all_items[0].keys())))
+        return {"ok": False, "error": "no_name_field", "all_items": all_items,
+                "camera_items": [], "distinct_names": [], "name_field": None}
+
+    log(f"품명 필드로 '{name_field}' 사용")
+
+    camera_items = [item for item in all_items if keyword in str(item.get(name_field, ""))]
+    distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
+
+    log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
+    log(f"'{keyword}' 포함 물품 수: {len(camera_items)}")
+    log(f"'{keyword}' 관련 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
+    for name in distinct_names:
+        log(f"  - {name}")
+
+    return {
+        "ok": True,
+        "error": None,
+        "all_items": all_items,
+        "camera_items": camera_items,
+        "distinct_names": distinct_names,
+        "name_field": name_field,
+    }
+
+
+def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_path, log=print):
+    """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+
+    rows = [[item.get(field, "") for _, field in EXPORT_COLUMNS] for item in camera_items]
+    headers = [header for header, _ in EXPORT_COLUMNS]
+
+    if openpyxl is not None:
+        path = output_path
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "카메라목록"
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        for col_idx, header in enumerate(headers, start=1):
+            width = max(len(header), *(len(str(r[col_idx - 1])) for r in rows)) if rows else len(header)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(width + 2, 60)
+
+        summary = wb.create_sheet("요약")
+        summary.append(["업체명", corp_name])
+        summary.append(["필터 키워드", keyword])
+        summary.append(["조회 기간", f"{begin_date} ~ {end_date}"])
+        summary.append(["매칭 물품 수", len(camera_items)])
+
+        wb.save(path)
+        log(f"\n엑셀 파일로 저장했습니다: {path}")
+        return path
+    else:
+        path = output_path
+        if not path.lower().endswith(".csv"):
+            path = os.path.splitext(path)[0] + ".csv"
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        log(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {path}")
+        log("엑셀(.xlsx)로 저장하려면 'pip install openpyxl' 실행 후 다시 실행하세요.")
+        return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corp-name", default="두원전자통신", help="조회할 업체명")
@@ -136,200 +344,26 @@ def main():
         print('예: export DATA_GO_KR_SERVICE_KEY="발급받은 서비스키"', file=sys.stderr)
         sys.exit(1)
 
-    base_params = {
-        "numOfRows": str(args.num_of_rows),
-        "type": "json",
-        "cntrctCorpNm": args.corp_name,
-        "inqryDiv": "1",
-        "inqryBgnDate": args.begin_date,
-        "inqryEndDate": args.end_date,
-    }
-
-    working_operation = None
-    all_items = []
-
-    for operation in CANDIDATE_OPERATIONS:
-        print(f"\n=== 오퍼레이션 시도: {operation} ===")
-        page_no = 1
-        operation_items = []
-        total_count = None
-        while True:
-            params = dict(base_params, pageNo=str(page_no))
-            try:
-                result = fetch(operation, service_key, params)
-            except urllib.error.HTTPError as e:
-                print(f"HTTP 오류: {e.code} {e.reason}")
-                break
-            except urllib.error.URLError as e:
-                print(f"네트워크 오류: {e.reason}")
-                break
-            except TimeoutError as e:
-                print(f"타임아웃 (재시도 모두 실패): {e}")
-                break
-
-            payload = result["json"]
-            if payload is None:
-                print("JSON이 아닌 응답 (앞부분 500자):")
-                print(result["raw"][:500])
-                break
-
-            header = payload.get("response", {}).get("header", {})
-            result_code = header.get("resultCode")
-            result_msg = header.get("resultMsg")
-            print(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
-
-            if result_code not in ("00", "0", None):
-                # 에러 메시지 자체가 필수 파라미터/오퍼레이션 존재 여부에 대한 단서가 된다.
-                break
-
-            body = payload.get("response", {}).get("body", {})
-            if total_count is None:
-                total_count = body.get("totalCount")
-            items = extract_items(payload)
-            print(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
-            if not items:
-                break
-            if page_no == 1:
-                print("첫 item 샘플:")
-                print(json.dumps(items[0], ensure_ascii=False, indent=2))
-                working_operation = operation
-            operation_items.extend(items)
-
-            if total_count is not None and len(operation_items) >= int(total_count):
-                break
-            if len(items) < args.num_of_rows:
-                break
-            if len(operation_items) >= MAX_ITEMS:
-                print(
-                    f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다. "
-                    "cntrctCorpNm 필터가 서버에서 적용되지 않았을 수 있습니다 "
-                    "(전체 데이터를 받아오는 중일 가능성)."
-                )
-                break
-            page_no += 1
-
-        if working_operation:
-            all_items = operation_items
-            break
-
-    # 서버가 cntrctCorpNm 파라미터를 무시하고 전체 목록을 반환하는 경우에 대비해
-    # 응답에 실제로 들어있는 회사명 필드로 다시 한번 걸러낸다.
-    corp_field = next(
-        (f for f in ("cntrctCorpNm", "corpNm") if all_items and f in all_items[0]), None
+    result = run_query(
+        args.corp_name,
+        args.keyword,
+        args.begin_date,
+        args.end_date,
+        service_key,
+        num_of_rows=args.num_of_rows,
     )
-    if corp_field:
-        before = len(all_items)
-        all_items = [
-            item for item in all_items if args.corp_name in str(item.get(corp_field, ""))
-        ]
-        print(
-            f"\n'{corp_field}' 필드 기준으로 '{args.corp_name}' 클라이언트측 재필터링: "
-            f"{before}건 -> {len(all_items)}건"
-        )
 
-    if not working_operation:
-        print(
-            "\n어떤 오퍼레이션도 정상 응답(item 포함)을 주지 않았습니다. "
-            "위에 출력된 resultCode/resultMsg를 참고 문서와 대조해서 "
-            "오퍼레이션명이나 필수 파라미터(inqryDiv/inqryBgnDate 등)를 조정해주세요."
-        )
+    if not result["ok"]:
         sys.exit(2)
 
-    print(f"\n성공한 오퍼레이션: {working_operation}")
-
-    if not all_items:
-        print(f"'{args.corp_name}' 이름과 일치하는 등록 물품이 없습니다.")
-        print(
-            "회사명 표기가 다를 수 있습니다(예: '(주)두원전자통신' 등). "
-            "--corp-name 값을 바꿔서 다시 시도해보세요."
-        )
-        sys.exit(4)
-
-    # 카메라 종류 집계: 이름 계열 필드 중 실제로 존재하는 것을 찾아서 키워드로 필터링
-    name_field = next(
-        (f for f in NAME_FIELD_CANDIDATES if f in all_items[0]), None
+    write_output(
+        result["camera_items"],
+        args.corp_name,
+        args.keyword,
+        args.begin_date,
+        args.end_date,
+        args.output,
     )
-    if not name_field:
-        print("품명/규격 관련 필드를 찾지 못했습니다. item 전체 필드 목록:")
-        print(list(all_items[0].keys()))
-        sys.exit(3)
-
-    print(f"품명 필드로 '{name_field}' 사용")
-
-    camera_items = [
-        item for item in all_items if args.keyword in str(item.get(name_field, ""))
-    ]
-    distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
-
-    print(f"\n'{args.corp_name}' 전체 등록 물품 수: {len(all_items)}")
-    print(f"'{args.keyword}' 포함 물품 수: {len(camera_items)}")
-    print(f"'{args.keyword}' 관련 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
-    for name in distinct_names:
-        print(f"  - {name}")
-
-    write_output(camera_items, args)
-
-
-EXPORT_COLUMNS = [
-    ("계약업체명", "cntrctCorpNm"),
-    ("품명", "prdctClsfcNoNm"),
-    ("규격/모델명", "prdctSpecNm"),
-    ("물품식별번호", "prdctIdntNo"),
-    ("제조사", "prdctMakrNm"),
-    ("원산지", "prdctOrgplceNm"),
-    ("계약방법", "cntrctMthdNm"),
-    ("계약번호", "shopngCntrctNo"),
-    ("계약일자", "cntrctDate"),
-    ("계약시작일", "cntrctBgnDate"),
-    ("계약종료일", "cntrctEndDate"),
-    ("계약금액", "cntrctPrceAmt"),
-    ("단위", "prdctUnit"),
-]
-
-
-def write_output(camera_items, args):
-    """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
-    try:
-        import openpyxl
-    except ImportError:
-        openpyxl = None
-
-    rows = [[item.get(field, "") for _, field in EXPORT_COLUMNS] for item in camera_items]
-    headers = [header for header, _ in EXPORT_COLUMNS]
-
-    if openpyxl is not None:
-        path = args.output
-        if not path.lower().endswith(".xlsx"):
-            path += ".xlsx"
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "카메라목록"
-        ws.append(headers)
-        for row in rows:
-            ws.append(row)
-        for col_idx, header in enumerate(headers, start=1):
-            width = max(len(header), *(len(str(r[col_idx - 1])) for r in rows)) if rows else len(header)
-            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(width + 2, 60)
-
-        summary = wb.create_sheet("요약")
-        summary.append(["업체명", args.corp_name])
-        summary.append(["필터 키워드", args.keyword])
-        summary.append(["조회 기간", f"{args.begin_date} ~ {args.end_date}"])
-        summary.append(["매칭 물품 수", len(camera_items)])
-
-        wb.save(path)
-        print(f"\n엑셀 파일로 저장했습니다: {path}")
-    else:
-        path = args.output
-        if not path.lower().endswith(".csv"):
-            path = os.path.splitext(path)[0] + ".csv"
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            writer.writerows(rows)
-        print(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {path}")
-        print("엑셀(.xlsx)로 저장하려면 'pip install openpyxl' 실행 후 다시 실행하세요.")
 
 
 if __name__ == "__main__":
