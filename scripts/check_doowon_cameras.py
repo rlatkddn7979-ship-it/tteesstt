@@ -346,17 +346,29 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
         summary.append(["조회 기간", f"{begin_date} ~ {end_date}"])
         summary.append(["매칭 물품 수", len(camera_items)])
 
-        wb.save(path)
+        try:
+            wb.save(path)
+        except PermissionError as e:
+            raise PermissionError(
+                f"'{path}' 파일이 다른 프로그램(엑셀 등)에서 열려있어 저장할 수 없습니다. "
+                "그 파일을 닫고 다시 시도해주세요."
+            ) from e
         log(f"\n엑셀 파일로 저장했습니다: {path}")
         return path
     else:
         path = output_path
         if not path.lower().endswith(".csv"):
             path = os.path.splitext(path)[0] + ".csv"
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            writer.writerows(rows)
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(rows)
+        except PermissionError as e:
+            raise PermissionError(
+                f"'{path}' 파일이 다른 프로그램(엑셀 등)에서 열려있어 저장할 수 없습니다. "
+                "그 파일을 닫고 다시 시도해주세요."
+            ) from e
         log(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {path}")
         log("엑셀(.xlsx)로 저장하려면 'pip install openpyxl' 실행 후 다시 실행하세요.")
         return path
