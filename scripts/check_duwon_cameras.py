@@ -10,8 +10,13 @@ Endpoint: https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService
     export DATA_GO_KR_SERVICE_KEY="발급받은 서비스키(디코딩된 일반 인증키)"
     python3 scripts/check_duwon_cameras.py
     python3 scripts/check_duwon_cameras.py --corp-name "다른업체명" --keyword "CCTV"
+    python3 scripts/check_duwon_cameras.py --output 결과.xlsx
 
 서비스키는 절대 코드에 하드코딩하거나 커밋하지 마세요. 환경변수로만 주입합니다.
+
+매칭된 물품 목록은 --output으로 지정한 경로(기본값: 두원전자통신_보안용카메라.xlsx)에 저장됩니다.
+openpyxl이 설치되어 있으면 엑셀(.xlsx)로, 없으면 같은 이름의 .csv로 대신 저장합니다.
+엑셀로 저장하려면: pip install openpyxl
 
 주의: 실제 오퍼레이션명/요청·응답 필드명은 data.go.kr의 참고문서
 ("조달청_OpenAPI참고자료_조달청 나라장터쇼핑몰물품목록정보서비스 1.3.docx")로 검증되지 않았습니다.
@@ -21,6 +26,7 @@ Endpoint: https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService
 """
 
 import argparse
+import csv
 import datetime
 import json
 import os
@@ -111,6 +117,11 @@ def main():
         "--end-date",
         default=datetime.date.today().strftime("%Y%m%d"),
         help="조회 종료일자(YYYYMMDD)",
+    )
+    parser.add_argument(
+        "--output",
+        default="두원전자통신_보안용카메라.xlsx",
+        help="결과를 저장할 엑셀 파일 경로 (openpyxl 미설치 시 같은 이름의 .csv로 대신 저장)",
     )
     args = parser.parse_args()
 
@@ -243,22 +254,77 @@ def main():
     camera_items = [
         item for item in all_items if args.keyword in str(item.get(name_field, ""))
     ]
+    distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
     print(f"\n'{args.corp_name}' 전체 등록 물품 수: {len(all_items)}")
-    print(f"'{args.keyword}'({name_field}) 포함 물품 수: {len(camera_items)}")
+    print(f"'{args.keyword}' 포함 물품 수: {len(camera_items)}")
+    print(f"'{args.keyword}' 관련 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
+    for name in distinct_names:
+        print(f"  - {name}")
 
-    # name_field(prdctClsfcNoNm)는 '보안용카메라' 같은 대분류 품명이라 전부 동일할 수 있다.
-    # 실제 "몇 종류"는 물품식별번호(prdctIdntNo, 모델/규격 단위 고유 식별자)로 세는 것이
-    # 더 정확하므로 그 기준으로도 집계한다.
-    model_field = "prdctIdntNo" if camera_items and "prdctIdntNo" in camera_items[0] else name_field
-    distinct_models = {}
-    for item in camera_items:
-        key = str(item.get(model_field, ""))
-        distinct_models.setdefault(key, item.get("prdctSpecNm") or item.get(name_field, ""))
+    write_output(camera_items, args)
 
-    print(f"'{args.keyword}' 관련 물품 종류(고유 {model_field} 개수): {len(distinct_models)}")
-    for model_id, spec in sorted(distinct_models.items()):
-        print(f"  - [{model_id}] {spec}")
+
+EXPORT_COLUMNS = [
+    ("계약업체명", "cntrctCorpNm"),
+    ("품명", "prdctClsfcNoNm"),
+    ("규격/모델명", "prdctSpecNm"),
+    ("물품식별번호", "prdctIdntNo"),
+    ("제조사", "prdctMakrNm"),
+    ("원산지", "prdctOrgplceNm"),
+    ("계약방법", "cntrctMthdNm"),
+    ("계약번호", "shopngCntrctNo"),
+    ("계약일자", "cntrctDate"),
+    ("계약시작일", "cntrctBgnDate"),
+    ("계약종료일", "cntrctEndDate"),
+    ("계약금액", "cntrctPrceAmt"),
+    ("단위", "prdctUnit"),
+]
+
+
+def write_output(camera_items, args):
+    """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+
+    rows = [[item.get(field, "") for _, field in EXPORT_COLUMNS] for item in camera_items]
+    headers = [header for header, _ in EXPORT_COLUMNS]
+
+    if openpyxl is not None:
+        path = args.output
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "카메라목록"
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        for col_idx, header in enumerate(headers, start=1):
+            width = max(len(header), *(len(str(r[col_idx - 1])) for r in rows)) if rows else len(header)
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(width + 2, 60)
+
+        summary = wb.create_sheet("요약")
+        summary.append(["업체명", args.corp_name])
+        summary.append(["필터 키워드", args.keyword])
+        summary.append(["조회 기간", f"{args.begin_date} ~ {args.end_date}"])
+        summary.append(["매칭 물품 수", len(camera_items)])
+
+        wb.save(path)
+        print(f"\n엑셀 파일로 저장했습니다: {path}")
+    else:
+        path = args.output
+        if not path.lower().endswith(".csv"):
+            path = os.path.splitext(path)[0] + ".csv"
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        print(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {path}")
+        print("엑셀(.xlsx)로 저장하려면 'pip install openpyxl' 실행 후 다시 실행하세요.")
 
 
 if __name__ == "__main__":
