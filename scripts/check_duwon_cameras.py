@@ -74,8 +74,8 @@ def fetch(
     operation: str,
     service_key: str,
     params: dict,
-    timeout: int = 60,
-    retries: int = 3,
+    timeout: int = 90,
+    retries: int = 5,
     log=print,
 ) -> dict:
     query = dict(params)
@@ -103,7 +103,7 @@ def fetch(
         else:
             continue
         if attempt < retries:
-            wait = 5 * attempt
+            wait = min(5 * attempt, 20)
             log(f"  {wait}초 대기 후 재시도합니다...")
             time.sleep(wait)
     else:
@@ -141,7 +141,7 @@ def run_query(
     begin_date: str,
     end_date: str,
     service_key: str,
-    num_of_rows: int = 999,
+    num_of_rows: int = 300,
     log=print,
 ) -> dict:
     """API를 조회하고 회사명/키워드로 필터링한 결과를 dict로 반환한다.
@@ -216,6 +216,7 @@ def run_query(
                 )
                 break
             page_no += 1
+            time.sleep(1)  # 연속 요청으로 서버에 부담을 주지 않도록 짧게 대기
 
         if working_operation:
             all_items = operation_items
@@ -342,7 +343,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corp-name", default="두원전자통신", help="조회할 업체명")
     parser.add_argument("--keyword", default="보안용카메라", help="품명/규격에서 필터링할 키워드")
-    parser.add_argument("--num-of-rows", type=int, default=999)
+    parser.add_argument(
+        "--num-of-rows",
+        type=int,
+        default=300,
+        help="페이지당 조회 건수. 낮출수록 요청 하나가 가벼워져 타임아웃이 줄어들 수 있음",
+    )
     parser.add_argument(
         "--begin-date",
         default=(datetime.date.today() - datetime.timedelta(days=365)).strftime("%Y%m%d"),
