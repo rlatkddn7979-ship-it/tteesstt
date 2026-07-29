@@ -40,6 +40,14 @@ import uuid
 
 BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 
+# 스크립트를 어떤 방식으로 실행하든(더블클릭 등) 현재 작업 폴더가 예상과 다를 수 있으므로,
+# 파일명만 주어졌을 때는 이 스크립트 파일이 있는 폴더를 기준으로 저장한다.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_output_path(path: str) -> str:
+    return path if os.path.isabs(path) else os.path.join(SCRIPT_DIR, path)
+
 # cntrctCorpNm 필터가 서버에서 무시되어 전국 데이터를 전부 받아오게 되는 사고를 막기 위한 안전장치.
 MAX_ITEMS = 5000
 
@@ -348,6 +356,9 @@ def _write_with_fallback(write_fn, path, log):
 
 def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_path, log=print):
     """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
+    output_path = _resolve_output_path(output_path)
+    log(f"저장 경로: {output_path}")
+
     try:
         import openpyxl
     except ImportError:
