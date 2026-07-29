@@ -117,7 +117,7 @@ def fetch(
         else:
             continue
         if attempt < retries:
-            wait = min(5 * attempt, 20)
+            wait = 5
             log(f"  {wait}초 대기 후 재시도합니다...")
             time.sleep(wait)
     else:
