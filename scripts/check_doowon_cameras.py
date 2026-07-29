@@ -9,7 +9,7 @@ Endpoint: https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService
 사용법 (CLI):
     export DATA_GO_KR_SERVICE_KEY="발급받은 서비스키(디코딩된 일반 인증키)"
     python3 scripts/check_doowon_cameras.py
-    python3 scripts/check_doowon_cameras.py --corp-name "다른업체명" --keyword "CCTV"
+    python3 scripts/check_doowon_cameras.py --corp-name "펜타게이트" --category "보안용카메라" --spec "200만화소,4배줌,블렛형"
     python3 scripts/check_doowon_cameras.py --output 결과.xlsx
 
 GUI로 실행하려면 scripts/check_doowon_cameras_gui.py 를 실행하세요.
@@ -17,7 +17,7 @@ GUI로 실행하려면 scripts/check_doowon_cameras_gui.py 를 실행하세요.
 서비스키는 절대 코드에 하드코딩하거나 커밋하지 마세요. 환경변수로만 주입합니다.
 
 매칭된 물품 목록은 --output으로 지정한 경로에 저장됩니다. --output을 생략하면
-"업체명_키워드_실행시각.xlsx" 형태로 자동 생성됩니다 (GUI는 항상 이 방식으로만 저장).
+"업체명_품명_규격_실행시각.xlsx" 형태로 자동 생성됩니다 (GUI는 항상 이 방식으로만 저장).
 openpyxl이 설치되어 있으면 엑셀(.xlsx)로, 없으면 같은 이름의 .csv로 대신 저장합니다.
 엑셀로 저장하려면: pip install openpyxl
 
@@ -56,12 +56,9 @@ CANDIDATE_OPERATIONS = [
     "getThptyUcntrctPrdctInfoList",  # 제3자단가계약 물품 목록
 ]
 
-# 응답에서 품명(카메라 종류 구분)으로 실제 확인된 필드
+# 응답에서 품명/규격(카메라 종류 구분)으로 실제 확인된 필드
 NAME_FIELD = "prdctClsfcNoNm"  # 물품분류번호명 (품명)
-
-# 키워드 검색 대상 필드. 품명(대분류)만으로는 "안내전광판"처럼 더 구체적인 단어가
-# 걸리지 않을 수 있어서, 물품식별번호명(모델/규격 설명)도 같이 검사한다.
-KEYWORD_FIELDS = [NAME_FIELD, "prdctSpecNm"]
+SPEC_FIELD = "prdctSpecNm"  # 규격/모델명 (자유 서술형 설명)
 
 EXPORT_COLUMNS = [
     ("계약업체명", "cntrctCorpNm"),
@@ -147,14 +144,20 @@ def extract_items(payload: dict):
 
 def run_query(
     corp_name: str,
-    keyword: str,
+    category: str,
+    spec: str,
     begin_date: str,
     end_date: str,
     service_key: str,
     num_of_rows: int = 999,
     log=print,
 ) -> dict:
-    """API를 조회하고 회사명/키워드로 필터링한 결과를 dict로 반환한다.
+    """API를 조회하고 회사명/품명/규격으로 필터링한 결과를 dict로 반환한다.
+
+    category(품명)는 prdctClsfcNoNm에 포함되는지로 매칭한다.
+    spec(규격)은 쉼표로 여러 조건을 넣을 수 있고("200만화소, 4배줌, 블렛형"),
+    prdctSpecNm에 그 조건들이 전부(AND) 포함돼야 매칭된다.
+    category/spec 둘 다 비워두면 해당 조건은 걸지 않는다.
 
     반환값: {"ok": bool, "error": str|None, "all_items": [...],
              "camera_items": [...], "distinct_names": [...], "name_field": str|None}
@@ -270,25 +273,35 @@ def run_query(
     name_field = NAME_FIELD
     all_categories = sorted({str(item.get(name_field, "")) for item in all_items})
 
-    def matches_keyword(item):
-        return any(keyword in str(item.get(f, "")) for f in KEYWORD_FIELDS)
+    spec_terms = [t.strip() for t in spec.split(",") if t.strip()]
 
-    camera_items = [item for item in all_items if matches_keyword(item)]
+    def matches(item):
+        if category and category not in str(item.get(NAME_FIELD, "")):
+            return False
+        if spec_terms:
+            spec_text = str(item.get(SPEC_FIELD, ""))
+            if not all(term in spec_text for term in spec_terms):
+                return False
+        return True
+
+    camera_items = [item for item in all_items if matches(item)]
     distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
+
+    filter_desc = f"품명='{category}', 규격={spec_terms or '(없음)'}"
 
     log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
     log(f"조회 기간 내 등록된 전체 품명({name_field}) 종류 ({len(all_categories)}개):")
-    for category in all_categories:
-        log(f"  - {category}")
+    for cat_name in all_categories:
+        log(f"  - {cat_name}")
 
-    log(f"\n'{keyword}'({'/'.join(KEYWORD_FIELDS)} 중 포함) 물품 수: {len(camera_items)}")
+    log(f"\n조건({filter_desc}) 일치 물품 수: {len(camera_items)}")
     if not camera_items:
         log(
-            f"'{keyword}'와(과) 일치하는 품명/규격이 없습니다. "
-            "위 전체 품명 목록에서 정확한 표기를 확인해 --keyword 값을 맞춰보세요. "
+            f"{filter_desc} 조건과 일치하는 물품이 없습니다. "
+            "위 전체 품명 목록에서 정확한 표기를 확인하거나, 규격 조건을 줄여보세요. "
             "조회 기간(--begin-date/--end-date) 밖의 계약이라 안 보일 수도 있습니다."
         )
-    log(f"'{keyword}' 관련 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
+    log(f"일치하는 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
     for name in distinct_names:
         log(f"  - {name}")
 
@@ -315,12 +328,16 @@ def _sanitize_filename_part(text: str) -> str:
     return "".join(c for c in text if c not in INVALID_FILENAME_CHARS).strip()
 
 
-def default_output_filename(corp_name: str, keyword: str, ext: str = ".xlsx") -> str:
-    """'업체명_키워드_실행시각' 형태의 파일명을 만든다."""
-    corp = _sanitize_filename_part(corp_name) or "업체"
-    kw = _sanitize_filename_part(keyword) or "키워드"
+def default_output_filename(corp_name: str, category: str, spec: str, ext: str = ".xlsx") -> str:
+    """'업체명_품명_규격_실행시각' 형태의 파일명을 만든다 (품명/규격이 비어있으면 생략)."""
+    parts = [_sanitize_filename_part(corp_name) or "업체"]
+    if category.strip():
+        parts.append(_sanitize_filename_part(category))
+    if spec.strip():
+        parts.append(_sanitize_filename_part(spec.replace(",", "-")))
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{corp}_{kw}_{timestamp}{ext}"
+    parts.append(timestamp)
+    return "_".join(p for p in parts if p) + ext
 
 
 def _timestamped_path(path):
@@ -354,7 +371,7 @@ def _write_with_fallback(write_fn, path, log):
         return fallback
 
 
-def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_path, log=print):
+def write_output(camera_items, corp_name, category, spec, begin_date, end_date, output_path, log=print):
     """카메라 목록을 엑셀(.xlsx)로 저장한다. openpyxl이 없으면 CSV로 대신 저장한다."""
     output_path = _resolve_output_path(output_path)
     log(f"저장 경로: {output_path}")
@@ -411,7 +428,8 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
 
         summary = wb.create_sheet("요약")
         summary.append(["업체명", corp_name])
-        summary.append(["필터 키워드", keyword])
+        summary.append(["품명", category])
+        summary.append(["규격", spec])
         summary.append(["조회 기간", f"{begin_date} ~ {end_date}"])
         summary.append(["매칭 물품 수", len(camera_items)])
 
@@ -439,7 +457,13 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corp-name", default="두원전자통신", help="조회할 업체명")
-    parser.add_argument("--keyword", default="보안용카메라", help="품명/규격에서 필터링할 키워드")
+    parser.add_argument("--category", default="보안용카메라", help="품명(대분류) 필터. 비우면 전체")
+    parser.add_argument(
+        "--spec",
+        default="",
+        help="규격/모델 필터. 쉼표로 여러 조건을 넣으면 전부(AND) 포함해야 매칭 "
+             "(예: --spec \"200만화소,4배줌,블렛형\"). 비우면 필터링 안 함",
+    )
     parser.add_argument(
         "--num-of-rows",
         type=int,
@@ -461,7 +485,7 @@ def main():
         "--output",
         default=None,
         help="결과를 저장할 엑셀 파일 경로 (openpyxl 미설치 시 같은 이름의 .csv로 대신 저장). "
-             "생략하면 '업체명_키워드_실행시각.xlsx'로 자동 생성",
+             "생략하면 '업체명_품명_규격_실행시각.xlsx'로 자동 생성",
     )
     args = parser.parse_args()
 
@@ -473,7 +497,8 @@ def main():
 
     result = run_query(
         args.corp_name,
-        args.keyword,
+        args.category,
+        args.spec,
         args.begin_date,
         args.end_date,
         service_key,
@@ -483,11 +508,12 @@ def main():
     if not result["ok"]:
         sys.exit(2)
 
-    output_path = args.output or default_output_filename(args.corp_name, args.keyword)
+    output_path = args.output or default_output_filename(args.corp_name, args.category, args.spec)
     write_output(
         result["camera_items"],
         args.corp_name,
-        args.keyword,
+        args.category,
+        args.spec,
         args.begin_date,
         args.end_date,
         output_path,

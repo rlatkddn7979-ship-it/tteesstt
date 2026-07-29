@@ -2,7 +2,7 @@
 """
 check_doowon_cameras.py를 위한 간단한 GUI.
 
-회사명/키워드/조회기간/서비스키/저장 파일을 화면에서 입력하고
+회사명/품명/규격/조회기간/서비스키를 화면에서 입력하고
 "조회 시작" 버튼을 누르면 결과와 진행 로그를 창 안에서 볼 수 있다.
 파이썬 표준 라이브러리(tkinter)만 사용하므로 별도 설치가 필요 없다.
 
@@ -37,7 +37,8 @@ class App(tk.Tk):
         form.pack(fill="x")
 
         self.corp_name_var = tk.StringVar(value="두원전자통신")
-        self.keyword_var = tk.StringVar(value="보안용카메라")
+        self.category_var = tk.StringVar(value="보안용카메라")
+        self.spec_var = tk.StringVar(value="")
         today = datetime.date.today()
         self.begin_date_var = tk.StringVar(
             value=(today - datetime.timedelta(days=365)).strftime("%Y%m%d")
@@ -47,7 +48,8 @@ class App(tk.Tk):
 
         rows = [
             ("업체명", self.corp_name_var, None),
-            ("키워드", self.keyword_var, None),
+            ("품명", self.category_var, None),
+            ("규격 (쉼표로 여러 개, 예: 200만화소,4배줌,블렛형)", self.spec_var, None),
             ("조회 시작일(YYYYMMDD)", self.begin_date_var, None),
             ("조회 종료일(YYYYMMDD)", self.end_date_var, None),
         ]
@@ -101,7 +103,8 @@ class App(tk.Tk):
             return
 
         corp_name = self.corp_name_var.get().strip()
-        keyword = self.keyword_var.get().strip()
+        category = self.category_var.get().strip()
+        spec = self.spec_var.get().strip()
         begin_date = self.begin_date_var.get().strip()
         end_date = self.end_date_var.get().strip()
         service_key = self.service_key_var.get().strip()
@@ -109,8 +112,11 @@ class App(tk.Tk):
         if not service_key:
             messagebox.showerror("오류", "서비스키를 입력해주세요.")
             return
-        if not corp_name or not keyword:
-            messagebox.showerror("오류", "업체명과 키워드를 입력해주세요.")
+        if not corp_name:
+            messagebox.showerror("오류", "업체명을 입력해주세요.")
+            return
+        if not category and not spec:
+            messagebox.showerror("오류", "품명 또는 규격 중 하나는 입력해주세요.")
             return
 
         self.log_widget.configure(state="normal")
@@ -121,22 +127,22 @@ class App(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_in_background,
-            args=(corp_name, keyword, begin_date, end_date, service_key),
+            args=(corp_name, category, spec, begin_date, end_date, service_key),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_in_background(self, corp_name, keyword, begin_date, end_date, service_key):
+    def _run_in_background(self, corp_name, category, spec, begin_date, end_date, service_key):
         try:
             result = core.run_query(
-                corp_name, keyword, begin_date, end_date, service_key, log=self._log
+                corp_name, category, spec, begin_date, end_date, service_key, log=self._log
             )
             saved_path = None
             if result["ok"]:
-                # 파일명은 사용자가 입력하지 않고 '업체명_키워드_실행시각'으로 자동 생성한다.
-                output_path = core.default_output_filename(corp_name, keyword)
+                # 파일명은 사용자가 입력하지 않고 '업체명_품명_규격_실행시각'으로 자동 생성한다.
+                output_path = core.default_output_filename(corp_name, category, spec)
                 saved_path = core.write_output(
-                    result["camera_items"], corp_name, keyword, begin_date, end_date,
+                    result["camera_items"], corp_name, category, spec, begin_date, end_date,
                     output_path, log=self._log,
                 )
             self.after(0, self._on_done, result, saved_path)
