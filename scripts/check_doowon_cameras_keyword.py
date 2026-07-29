@@ -88,7 +88,7 @@ def fetch(
     operation: str,
     service_key: str,
     params: dict,
-    timeout: int = 45,
+    timeout: int = 15,
     retries: int = 5,
     log=print,
 ) -> dict:
