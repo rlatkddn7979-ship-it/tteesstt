@@ -365,6 +365,15 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
     rows = [[cell_value(item, field) for _, field in EXPORT_COLUMNS] for item in camera_items]
     headers = [header for header, _ in EXPORT_COLUMNS]
 
+    def save_csv(p):
+        with open(p, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
+
+    def csv_fallback_path():
+        return os.path.splitext(output_path)[0] + ".csv"
+
     if openpyxl is not None:
         path = output_path
         if not path.lower().endswith(".xlsx"):
@@ -395,19 +404,21 @@ def write_output(camera_items, corp_name, keyword, begin_date, end_date, output_
         summary.append(["조회 기간", f"{begin_date} ~ {end_date}"])
         summary.append(["매칭 물품 수", len(camera_items)])
 
-        saved_path = _write_with_fallback(wb.save, path, log)
-        log(f"\n엑셀 파일로 저장했습니다: {saved_path}")
+        try:
+            saved_path = _write_with_fallback(wb.save, path, log)
+        except PermissionError:
+            # 특정 파일명이 아니라 확장자(.xlsx) 자체가 막히는 경우가 있다
+            # (예: 랜섬웨어 방지 기능이 오피스 문서 형식만 차단). 이때는 CSV로 대신 저장한다.
+            csv_path = csv_fallback_path()
+            log(
+                f"\n엑셀(.xlsx) 저장이 계속 막혀서 CSV로 대신 저장합니다: {csv_path} "
+                "(엑셀 파일 자체가 보안 프로그램에 의해 차단되고 있을 수 있습니다)"
+            )
+            saved_path = _write_with_fallback(save_csv, csv_path, log)
+        log(f"\n결과를 저장했습니다: {saved_path}")
         return saved_path
     else:
-        path = output_path
-        if not path.lower().endswith(".csv"):
-            path = os.path.splitext(path)[0] + ".csv"
-        def save_csv(p):
-            with open(p, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-                writer.writerows(rows)
-
+        path = csv_fallback_path()
         saved_path = _write_with_fallback(save_csv, path, log)
         log(f"\nopenpyxl이 설치되어 있지 않아 CSV로 저장했습니다: {saved_path}")
         log("엑셀(.xlsx)로 저장하려면 'pip install openpyxl' 실행 후 다시 실행하세요.")
