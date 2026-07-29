@@ -48,7 +48,7 @@ class App(tk.Tk):
 
         rows = [
             ("업체명", self.corp_name_var, None),
-            ("품명", self.category_var, None),
+            ("품명 (쉼표로 여러 개, 하나라도 일치하면 매칭)", self.category_var, None),
             ("규격 (쉼표로 여러 개, 예: 200만화소,4배줌,블렛형)", self.spec_var, None),
             ("조회 시작일(YYYYMMDD)", self.begin_date_var, None),
             ("조회 종료일(YYYYMMDD)", self.end_date_var, None),

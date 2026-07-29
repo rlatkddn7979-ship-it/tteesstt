@@ -9,7 +9,7 @@ Endpoint: https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService
 사용법 (CLI):
     export DATA_GO_KR_SERVICE_KEY="발급받은 서비스키(디코딩된 일반 인증키)"
     python3 scripts/check_doowon_cameras.py
-    python3 scripts/check_doowon_cameras.py --corp-name "펜타게이트" --category "보안용카메라" --spec "200만화소,4배줌,블렛형"
+    python3 scripts/check_doowon_cameras.py --corp-name "펜타게이트" --category "보안용카메라,영상감시장치" --spec "200만화소,4배줌,블렛형"
     python3 scripts/check_doowon_cameras.py --output 결과.xlsx
 
 GUI로 실행하려면 scripts/check_doowon_cameras_gui.py 를 실행하세요.
@@ -154,9 +154,10 @@ def run_query(
 ) -> dict:
     """API를 조회하고 회사명/품명/규격으로 필터링한 결과를 dict로 반환한다.
 
-    category(품명)는 prdctClsfcNoNm에 포함되는지로 매칭한다.
-    spec(규격)은 쉼표로 여러 조건을 넣을 수 있고("200만화소, 4배줌, 블렛형"),
-    prdctSpecNm에 그 조건들이 전부(AND) 포함돼야 매칭된다.
+    category(품명)는 쉼표로 여러 개를 넣을 수 있고("보안용카메라, 영상감시장치"),
+    물품 하나는 품명이 하나뿐이므로 그 중 하나라도(OR) prdctClsfcNoNm에 포함되면 매칭된다.
+    spec(규격)도 쉼표로 여러 조건을 넣을 수 있지만("200만화소, 4배줌, 블렛형"),
+    이건 한 물품의 규격 설명 안에 여러 속성이 같이 적혀 있으므로 전부(AND) 포함돼야 매칭된다.
     category/spec 둘 다 비워두면 해당 조건은 걸지 않는다.
 
     반환값: {"ok": bool, "error": str|None, "all_items": [...],
@@ -273,11 +274,14 @@ def run_query(
     name_field = NAME_FIELD
     all_categories = sorted({str(item.get(name_field, "")) for item in all_items})
 
+    category_terms = [t.strip() for t in category.split(",") if t.strip()]
     spec_terms = [t.strip() for t in spec.split(",") if t.strip()]
 
     def matches(item):
-        if category and category not in str(item.get(NAME_FIELD, "")):
-            return False
+        if category_terms:
+            category_text = str(item.get(NAME_FIELD, ""))
+            if not any(term in category_text for term in category_terms):
+                return False
         if spec_terms:
             spec_text = str(item.get(SPEC_FIELD, ""))
             if not all(term in spec_text for term in spec_terms):
@@ -287,7 +291,7 @@ def run_query(
     camera_items = [item for item in all_items if matches(item)]
     distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
-    filter_desc = f"품명='{category}', 규격={spec_terms or '(없음)'}"
+    filter_desc = f"품명(OR)={category_terms or '(없음)'}, 규격(AND)={spec_terms or '(없음)'}"
 
     log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
     log(f"조회 기간 내 등록된 전체 품명({name_field}) 종류 ({len(all_categories)}개):")
@@ -332,7 +336,7 @@ def default_output_filename(corp_name: str, category: str, spec: str, ext: str =
     """'업체명_품명_규격_실행시각' 형태의 파일명을 만든다 (품명/규격이 비어있으면 생략)."""
     parts = [_sanitize_filename_part(corp_name) or "업체"]
     if category.strip():
-        parts.append(_sanitize_filename_part(category))
+        parts.append(_sanitize_filename_part(category.replace(",", "-")))
     if spec.strip():
         parts.append(_sanitize_filename_part(spec.replace(",", "-")))
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -457,7 +461,12 @@ def write_output(camera_items, corp_name, category, spec, begin_date, end_date, 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corp-name", default="두원전자통신", help="조회할 업체명")
-    parser.add_argument("--category", default="보안용카메라", help="품명(대분류) 필터. 비우면 전체")
+    parser.add_argument(
+        "--category",
+        default="보안용카메라",
+        help="품명(대분류) 필터. 쉼표로 여러 개를 넣으면 그 중 하나라도(OR) 일치하면 매칭 "
+             "(예: --category \"보안용카메라,영상감시장치\"). 비우면 전체",
+    )
     parser.add_argument(
         "--spec",
         default="",
