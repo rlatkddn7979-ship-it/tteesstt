@@ -115,9 +115,7 @@ class App(tk.Tk):
         if not corp_name:
             messagebox.showerror("오류", "업체명을 입력해주세요.")
             return
-        if not category and not spec:
-            messagebox.showerror("오류", "품명 또는 규격 중 하나는 입력해주세요.")
-            return
+        # 품명/규격을 둘 다 비워두면 해당 회사의 전체 등록 물품을 가져온다.
 
         self.log_widget.configure(state="normal")
         self.log_widget.delete("1.0", "end")
