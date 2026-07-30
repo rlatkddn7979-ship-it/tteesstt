@@ -128,7 +128,7 @@ def fetch(
     service_key: str,
     params: dict,
     timeout: int = 30,
-    retries: int = 5,
+    retries: int = 10,
     log=print,
 ) -> dict:
     query = dict(params)
