@@ -186,7 +186,7 @@ def run_query(
     begin_date: str,
     end_date: str,
     service_key: str,
-    num_of_rows: int = 999,
+    num_of_rows: int = 50,
     log=print,
 ) -> dict:
     """API를 조회하고 회사명/품명/규격으로 필터링한 결과를 dict로 반환한다.
@@ -513,9 +513,9 @@ def main():
     parser.add_argument(
         "--num-of-rows",
         type=int,
-        default=999,
-        help="페이지당 조회 건수. 업체 하나의 물품 수는 보통 999건 이내라 한 번에 끝나는 게 더 빠름. "
-             "타임아웃이 잦으면 낮춰서 시도해보세요",
+        default=50,
+        help="페이지당 조회 건수. numOfRows가 크면(예: 999) 서버 쿼리가 무거워져 타임아웃이 "
+             "잘 나는 게 확인돼서 기본값을 낮게 잡음. 여러 페이지로 나눠 전부 가져온다",
     )
     parser.add_argument(
         "--begin-date",
