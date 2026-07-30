@@ -127,6 +127,7 @@ def fetch(
     query = dict(params)
     query["serviceKey"] = service_key
     url = f"{BASE_URL}/{operation}?{urllib.parse.urlencode(query)}"
+    log(f"요청 URL: {url}")
 
     # 502/503/504는 게이트웨이/서버가 일시적으로 과부하일 때 나는 오류라 재시도할 가치가 있다.
     RETRYABLE_HTTP_CODES = (502, 503, 504)
