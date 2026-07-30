@@ -104,6 +104,7 @@ def _curl_request(url: str, timeout: int):
             text=True,
             encoding="utf-8",
             timeout=timeout + 10,
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired as e:
         raise TimeoutError(f"curl 실행이 {timeout + 10}초를 넘겨 중단됨") from e
