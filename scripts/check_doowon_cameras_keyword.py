@@ -95,7 +95,13 @@ def fetch(
     query = dict(params)
     query["serviceKey"] = service_key
     url = f"{BASE_URL}/{operation}?{urllib.parse.urlencode(query)}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    # 기본 User-Agent(Python-urllib/x.x)를 curl처럼 바꾼다. 일부 서버/보안장비가
+    # 스크립트스러운 User-Agent 요청을 브라우저/curl 요청과 다르게(느리게 또는 차단)
+    # 처리하는 경우가 있어서, curl로는 되는데 파이썬에서만 안 되는 원인일 수 있다.
+    req = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "curl/8.5.0"},
+    )
 
     # 502/503/504는 게이트웨이/서버가 일시적으로 과부하일 때 나는 오류라 재시도할 가치가 있다.
     RETRYABLE_HTTP_CODES = (502, 503, 504)
