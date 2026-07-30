@@ -120,7 +120,7 @@ def fetch(
     operation: str,
     service_key: str,
     params: dict,
-    timeout: int = 15,
+    timeout: int = 30,
     retries: int = 5,
     log=print,
 ) -> dict:
