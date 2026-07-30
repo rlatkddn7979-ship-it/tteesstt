@@ -156,9 +156,7 @@ def fetch(
             log(f"  (HTTP {status_code}, {attempt}/{retries}번째 시도 실패)")
 
         if attempt < retries:
-            wait = 20
-            log(f"  {wait}초 대기 후 재시도합니다...")
-            time.sleep(wait)
+            log("  대기 없이 바로 재시도합니다...")
     else:
         raise last_error
 
