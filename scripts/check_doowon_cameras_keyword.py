@@ -35,11 +35,11 @@ import csv
 import datetime
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 
 BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
@@ -84,6 +84,45 @@ EXPORT_COLUMNS = [
 ]
 
 
+CURL_STATUS_MARKER = "__HTTP_STATUS__"
+
+
+def _curl_request(url: str, timeout: int):
+    """curl.exe로 요청을 보낸다. 이 PC에서는 파이썬 urllib은 계속 타임아웃 나는데
+    curl은 항상 정상 응답을 받아온 게 확인돼서, urllib 대신 curl을 직접 호출한다."""
+    try:
+        result = subprocess.run(
+            [
+                "curl", "-s", "-S",
+                "--max-time", str(timeout),
+                "-A", "curl/8.5.0",
+                "-H", "Accept: application/json",
+                "-w", f"\n{CURL_STATUS_MARKER}%{{http_code}}",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout + 10,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise TimeoutError(f"curl 실행이 {timeout + 10}초를 넘겨 중단됨") from e
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "curl 명령을 찾을 수 없습니다. Windows 10/11에는 기본 내장되어 있는데, "
+            "PATH에서 안 잡히면 PowerShell에서 'curl' 실행이 되는지 먼저 확인해주세요."
+        ) from e
+
+    if result.returncode != 0:
+        # curl 자체의 연결 실패(타임아웃, DNS 실패 등). exit code 28 = timeout.
+        raise TimeoutError(f"curl 오류(exit code {result.returncode}): {result.stderr.strip()}")
+
+    output = result.stdout
+    body, _, status_part = output.rpartition(CURL_STATUS_MARKER)
+    status_code = int(status_part.strip()) if status_part.strip().isdigit() else None
+    return body, status_code
+
+
 def fetch(
     operation: str,
     service_key: str,
@@ -95,13 +134,6 @@ def fetch(
     query = dict(params)
     query["serviceKey"] = service_key
     url = f"{BASE_URL}/{operation}?{urllib.parse.urlencode(query)}"
-    # 기본 User-Agent(Python-urllib/x.x)를 curl처럼 바꾼다. 일부 서버/보안장비가
-    # 스크립트스러운 User-Agent 요청을 브라우저/curl 요청과 다르게(느리게 또는 차단)
-    # 처리하는 경우가 있어서, curl로는 되는데 파이썬에서만 안 되는 원인일 수 있다.
-    req = urllib.request.Request(
-        url,
-        headers={"Accept": "application/json", "User-Agent": "curl/8.5.0"},
-    )
 
     # 502/503/504는 게이트웨이/서버가 일시적으로 과부하일 때 나는 오류라 재시도할 가치가 있다.
     RETRYABLE_HTTP_CODES = (502, 503, 504)
@@ -109,19 +141,18 @@ def fetch(
     last_error = None
     for attempt in range(1, retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-            break
+            raw, status_code = _curl_request(url, timeout)
         except TimeoutError as e:
             last_error = e
             log(f"  (타임아웃, {attempt}/{retries}번째 시도 실패: {e})")
-        except urllib.error.HTTPError as e:
-            if e.code not in RETRYABLE_HTTP_CODES:
-                raise
-            last_error = e
-            log(f"  (HTTP {e.code} {e.reason}, {attempt}/{retries}번째 시도 실패)")
         else:
-            continue
+            if status_code is None or status_code < 400:
+                break
+            last_error = urllib.error.HTTPError(url, status_code, raw[:200], None, None)
+            if status_code not in RETRYABLE_HTTP_CODES:
+                raise last_error
+            log(f"  (HTTP {status_code}, {attempt}/{retries}번째 시도 실패)")
+
         if attempt < retries:
             wait = 5
             log(f"  {wait}초 대기 후 재시도합니다...")
