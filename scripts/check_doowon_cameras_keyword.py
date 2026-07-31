@@ -200,13 +200,15 @@ def run_query(
     반환값: {"ok": bool, "error": str|None, "all_items": [...],
              "camera_items": [...], "distinct_names": [...], "name_field": str|None}
     """
+    # 참고문서(조달청_OpenAPI참고자료 1.3)로 확인한 실제 파라미터명: inqryDiv/inqryBgnDate/
+    # inqryEndDate는 이 오퍼레이션에 존재하지 않고, 등록일시 범위는 rgstDtBgnDt/rgstDtEndDt
+    # (형식 YYYYMMDDHH24MI, 최대 1년 범위)로 지정해야 한다.
     base_params = {
         "numOfRows": str(num_of_rows),
         "type": "json",
         "cntrctCorpNm": corp_name,
-        "inqryDiv": "1",
-        "inqryBgnDate": begin_date,
-        "inqryEndDate": end_date,
+        "rgstDtBgnDt": f"{begin_date}0000",
+        "rgstDtEndDt": f"{end_date}2359",
     }
 
     working_operation = None
