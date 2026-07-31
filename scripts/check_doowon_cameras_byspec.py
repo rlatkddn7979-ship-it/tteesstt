@@ -32,6 +32,7 @@ openpyxl이 설치되어 있으면 엑셀(.xlsx)로, 없으면 같은 이름의 
 """
 
 import argparse
+import collections
 import csv
 import datetime
 import json
@@ -316,8 +317,12 @@ def run_query(
     # "종류 수" 집계는 품명(대분류, NAME_FIELD)이 아니라 규격/모델명(SPEC_FIELD) 기준으로 한다.
     # 품명은 "보안용카메라"처럼 여러 모델이 다 같은 값으로 묶이는 대분류라 종류 수 집계에 안 맞는다.
     name_field = SPEC_FIELD
-    all_categories = sorted({str(item.get(NAME_FIELD, "")) for item in all_items})
-    all_specs = sorted({str(item.get(SPEC_FIELD, "")) for item in all_items if item.get(SPEC_FIELD)})
+    category_counts = collections.Counter(str(item.get(NAME_FIELD, "")) for item in all_items)
+    all_categories = sorted(category_counts)
+    spec_counts = collections.Counter(
+        str(item.get(SPEC_FIELD, "")) for item in all_items if item.get(SPEC_FIELD)
+    )
+    all_specs = sorted(spec_counts)
 
     category_terms = [t.strip() for t in category.split(",") if t.strip()]
     spec_terms = [t.strip() for t in spec.split(",") if t.strip()]
@@ -341,11 +346,11 @@ def run_query(
     log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
     log(f"조회 기간 내 등록된 전체 품명(참고용, {NAME_FIELD}) 종류 ({len(all_categories)}개):")
     for cat_name in all_categories:
-        log(f"  - {cat_name}")
+        log(f"  - {cat_name} ({category_counts[cat_name]}건)")
 
     log(f"\n조회 기간 내 등록된 전체 규격({SPEC_FIELD}) 고유값 ({len(all_specs)}개):")
     for spec_text in all_specs:
-        log(f"  - {spec_text}")
+        log(f"  - {spec_text} ({spec_counts[spec_text]}건)")
 
     log(f"\n조건({filter_desc}) 일치 물품 수: {len(camera_items)}")
     if not camera_items:
