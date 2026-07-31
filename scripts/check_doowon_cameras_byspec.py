@@ -185,6 +185,20 @@ def extract_items(payload: dict):
     return []
 
 
+def _date_chunks(begin_date: str, end_date: str, max_days: int = 366):
+    """rgstDtBgnDt/rgstDtEndDt는 한 번에 최대 1년까지만 조회 가능하므로,
+    [begin_date, end_date](YYYYMMDD)를 max_days 이하 구간들로 쪼갠다."""
+    begin = datetime.datetime.strptime(begin_date, "%Y%m%d").date()
+    end = datetime.datetime.strptime(end_date, "%Y%m%d").date()
+    chunks = []
+    cur = begin
+    while cur <= end:
+        chunk_end = min(cur + datetime.timedelta(days=max_days - 1), end)
+        chunks.append((cur.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")))
+        cur = chunk_end + datetime.timedelta(days=1)
+    return chunks
+
+
 def run_query(
     corp_name: str,
     category: str,
@@ -208,77 +222,96 @@ def run_query(
     """
     # 참고문서(조달청_OpenAPI참고자료 1.3)로 확인한 실제 파라미터명: inqryDiv/inqryBgnDate/
     # inqryEndDate는 이 오퍼레이션에 존재하지 않고, 등록일시 범위는 rgstDtBgnDt/rgstDtEndDt
-    # (형식 YYYYMMDDHH24MI, 최대 1년 범위)로 지정해야 한다.
-    base_params = {
-        "numOfRows": str(num_of_rows),
-        "type": "json",
-        "cntrctCorpNm": corp_name,
-        "rgstDtBgnDt": f"{begin_date}0000",
-        "rgstDtEndDt": f"{end_date}2359",
-    }
+    # (형식 YYYYMMDDHH24MI)로 지정해야 하며, 한 번에 최대 1년까지만 조회 가능하다.
+    date_chunks = _date_chunks(begin_date, end_date)
+    if len(date_chunks) > 1:
+        log(f"등록일시 범위가 1년을 넘어서 {len(date_chunks)}개 구간으로 나눠 조회합니다.")
 
     working_operation = None
     all_items = []
+    seen_keys = set()
 
     for operation in CANDIDATE_OPERATIONS:
-        log(f"\n=== 오퍼레이션 시도: {operation} ===")
-        page_no = 1
-        operation_items = []
-        total_count = None
-        while True:
-            params = dict(base_params, pageNo=str(page_no))
-            try:
-                result = fetch(operation, service_key, params, log=log)
-            except urllib.error.HTTPError as e:
-                log(f"HTTP 오류: {e.code} {e.reason}")
-                break
-            except urllib.error.URLError as e:
-                log(f"네트워크 오류: {e.reason}")
-                break
-            except TimeoutError as e:
-                log(f"타임아웃 (재시도 모두 실패): {e}")
-                break
+        for chunk_idx, (chunk_begin, chunk_end) in enumerate(date_chunks, start=1):
+            log(
+                f"\n=== 오퍼레이션 시도: {operation} "
+                f"(구간 {chunk_idx}/{len(date_chunks)}: {chunk_begin}~{chunk_end}) ==="
+            )
+            base_params = {
+                "numOfRows": str(num_of_rows),
+                "type": "json",
+                "cntrctCorpNm": corp_name,
+                "rgstDtBgnDt": f"{chunk_begin}0000",
+                "rgstDtEndDt": f"{chunk_end}2359",
+            }
+            page_no = 1
+            total_count = None
+            chunk_item_count = 0
+            while True:
+                params = dict(base_params, pageNo=str(page_no))
+                try:
+                    result = fetch(operation, service_key, params, log=log)
+                except urllib.error.HTTPError as e:
+                    log(f"HTTP 오류: {e.code} {e.reason}")
+                    break
+                except urllib.error.URLError as e:
+                    log(f"네트워크 오류: {e.reason}")
+                    break
+                except TimeoutError as e:
+                    log(f"타임아웃 (재시도 모두 실패): {e}")
+                    break
 
-            payload = result["json"]
-            if payload is None:
-                log("JSON이 아닌 응답 (앞부분 500자):")
-                log(result["raw"][:500])
-                break
+                payload = result["json"]
+                if payload is None:
+                    log("JSON이 아닌 응답 (앞부분 500자):")
+                    log(result["raw"][:500])
+                    break
 
-            header = payload.get("response", {}).get("header", {})
-            result_code = header.get("resultCode")
-            result_msg = header.get("resultMsg")
-            log(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
+                header = payload.get("response", {}).get("header", {})
+                result_code = header.get("resultCode")
+                result_msg = header.get("resultMsg")
+                log(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
 
-            if result_code not in ("00", "0", None):
-                break
+                if result_code not in ("00", "0", None):
+                    break
 
-            body = payload.get("response", {}).get("body", {})
-            if total_count is None:
-                total_count = body.get("totalCount")
-            items = extract_items(payload)
-            log(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
-            if not items:
-                break
-            if page_no == 1:
                 working_operation = operation
-            operation_items.extend(items)
+                body = payload.get("response", {}).get("body", {})
+                if total_count is None:
+                    total_count = body.get("totalCount")
+                items = extract_items(payload)
+                log(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
+                chunk_item_count += len(items)
 
-            if total_count is not None and len(operation_items) >= int(total_count):
-                break
-            if len(items) < num_of_rows:
-                break
-            if len(operation_items) >= MAX_ITEMS:
-                log(
-                    f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다. "
-                    "cntrctCorpNm 필터가 서버에서 적용되지 않았을 수 있습니다."
-                )
-                break
-            page_no += 1
-            time.sleep(1)  # 연속 요청으로 서버에 부담을 주지 않도록 짧게 대기
+                new_count = 0
+                for item in items:
+                    key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        all_items.append(item)
+                        new_count += 1
+                if new_count < len(items):
+                    log(f"  (구간 경계 중복 {len(items) - new_count}건 제외)")
+
+                if not items:
+                    break
+                if total_count is not None and chunk_item_count >= int(total_count):
+                    break
+                if len(items) < num_of_rows:
+                    break
+                if len(all_items) >= MAX_ITEMS:
+                    log(
+                        f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다. "
+                        "cntrctCorpNm 필터가 서버에서 적용되지 않았을 수 있습니다."
+                    )
+                    break
+                page_no += 1
+                time.sleep(1)  # 연속 요청으로 서버에 부담을 주지 않도록 짧게 대기
+
+            if chunk_idx < len(date_chunks):
+                time.sleep(1)  # 구간 사이에도 짧게 대기
 
         if working_operation:
-            all_items = operation_items
             break
 
     # 서버가 cntrctCorpNm 파라미터를 무시하고 전체 목록을 반환하는 경우에 대비해
