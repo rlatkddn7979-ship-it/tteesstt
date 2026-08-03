@@ -47,7 +47,7 @@ class App(tk.Tk):
         self.service_key_var = tk.StringVar(value=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
 
         rows = [
-            ("제조사명", self.maker_name_var, None),
+            ("제조사명 (비우면 전체 제조사 다 보여줌)", self.maker_name_var, None),
             ("품명 (쉼표로 여러 개, 하나라도 일치하면 매칭. 비우면 전국 조회-느림)", self.category_var, None),
             ("규격 (쉼표로 여러 개, 예: 200만화소,4배줌,블렛형)", self.spec_var, None),
             ("조회 시작일(YYYYMMDD)", self.begin_date_var, None),
@@ -113,8 +113,13 @@ class App(tk.Tk):
             messagebox.showerror("오류", "서비스키를 입력해주세요.")
             return
         if not maker_name:
-            messagebox.showerror("오류", "제조사명을 입력해주세요.")
-            return
+            proceed = messagebox.askyesno(
+                "확인",
+                "제조사명을 비워두면 필터링 없이 해당 품명의 모든 제조사 물품을 다 보여줍니다. "
+                "계속하시겠습니까?",
+            )
+            if not proceed:
+                return
         if not category:
             proceed = messagebox.askyesno(
                 "확인",

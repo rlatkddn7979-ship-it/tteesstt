@@ -510,7 +510,11 @@ def write_output(camera_items, maker_name, category, spec, begin_date, end_date,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--maker-name", default="두원전자통신", help="조회할 제조사명")
+    parser.add_argument(
+        "--maker-name",
+        default="두원전자통신",
+        help="조회할 제조사명. 비우면(--maker-name \"\") 제조사 필터 없이 해당 품명의 모든 제조사 물품을 다 보여줌",
+    )
     parser.add_argument(
         "--category",
         default="보안용카메라",
