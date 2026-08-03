@@ -289,11 +289,16 @@ def run_query(
     end_date: str,
     service_key: str,
     num_of_rows: int = 999,
+    include_maker_search: bool = True,
     log=print,
 ) -> dict:
     """계약업체명(cntrctCorpNm) 또는 제조사(prdctMakrNm)에 corp_name이 들어있는 물품을
     모두(OR) 찾는다. category(품명)를 지정하면 2단계 조회 범위를 그 품명으로 좁히고,
     비워두면 전국 데이터를 다 받아온다(느림).
+
+    include_maker_search=False로 주면 2단계(제조사 매칭용 조회)를 건너뛰고
+    1단계(계약업체명) 결과만으로 바로 결과를 낸다 (빠르지만, 제조사만 일치하고
+    계약업체명은 다른 회사인 물품은 못 찾는다).
 
     반환값: {"ok": bool, "error": str|None, "all_items": [...],
              "camera_items": [...], "distinct_names": [...], "name_field": str|None}
@@ -318,23 +323,30 @@ def run_query(
     )
     any_success = any_success or ok1
 
-    # 2단계: 품명으로 좁히거나(지정된 경우) 전국 전체로 조회한 뒤, 제조사/계약업체명에
-    # corp_name이 들어있는 것만 나중에 걸러낸다.
-    server_terms = category_terms or [""]
-    if not category_terms:
+    if not include_maker_search:
         log(
-            "\n경고: 품명(--category)을 지정하지 않아 2단계 조회가 전국 모든 회사의 데이터를 "
-            "받아옵니다. 시간이 오래 걸릴 수 있습니다."
+            "\n(2단계 제조사 매칭 조회는 건너뜁니다. 계약업체명만으로 이미 찾은 "
+            f"{len(all_items)}건으로 결과를 냅니다. 제조사만 일치하고 계약업체명은 "
+            "다른 회사로 등록된 물품은 이 결과에 포함되지 않을 수 있습니다.)"
         )
-    for term in server_terms:
-        term_desc = term or "(품명 필터 없음)"
-        log(f"\n### 2단계: 품명='{term_desc}' 으로 전국 조회 (제조사 매칭용) ###")
-        extra = {"prdctClsfcNoNm": term} if term else {}
-        ok2 = _fetch_paginated(
-            operation, extra, date_chunks, num_of_rows, service_key,
-            all_items, seen_keys, log, f"2단계:품명={term_desc}",
-        )
-        any_success = any_success or ok2
+    else:
+        # 2단계: 품명으로 좁히거나(지정된 경우) 전국 전체로 조회한 뒤, 제조사/계약업체명에
+        # corp_name이 들어있는 것만 나중에 걸러낸다.
+        server_terms = category_terms or [""]
+        if not category_terms:
+            log(
+                "\n경고: 품명(--category)을 지정하지 않아 2단계 조회가 전국 모든 회사의 데이터를 "
+                "받아옵니다. 시간이 오래 걸릴 수 있습니다."
+            )
+        for term in server_terms:
+            term_desc = term or "(품명 필터 없음)"
+            log(f"\n### 2단계: 품명='{term_desc}' 으로 전국 조회 (제조사 매칭용) ###")
+            extra = {"prdctClsfcNoNm": term} if term else {}
+            ok2 = _fetch_paginated(
+                operation, extra, date_chunks, num_of_rows, service_key,
+                all_items, seen_keys, log, f"2단계:품명={term_desc}",
+            )
+            any_success = any_success or ok2
 
     if not any_success:
         log(
@@ -559,6 +571,11 @@ def main():
     )
     parser.add_argument("--num-of-rows", type=int, default=999, help="페이지당 조회 건수")
     parser.add_argument(
+        "--corp-only",
+        action="store_true",
+        help="2단계(제조사 매칭용 전국/품명 조회)를 건너뛰고 계약업체명 조회 결과만 바로 보여줌 (빠름)",
+    )
+    parser.add_argument(
         "--begin-date",
         default=(datetime.date.today() - datetime.timedelta(days=365)).strftime("%Y%m%d"),
         help="조회 시작일자(YYYYMMDD). 기본값: 오늘로부터 1년 전",
@@ -589,6 +606,7 @@ def main():
         args.end_date,
         service_key,
         num_of_rows=args.num_of_rows,
+        include_maker_search=not args.corp_only,
     )
 
     if not result["ok"]:

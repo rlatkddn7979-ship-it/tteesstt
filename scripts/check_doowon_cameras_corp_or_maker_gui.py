@@ -46,6 +46,7 @@ class App(tk.Tk):
         )
         self.end_date_var = tk.StringVar(value=today.strftime("%Y%m%d"))
         self.service_key_var = tk.StringVar(value=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
+        self.include_maker_search_var = tk.BooleanVar(value=True)
 
         rows = [
             ("업체명 (계약업체명 또는 제조사, 둘 중 하나만 맞아도 매칭)", self.corp_name_var, None),
@@ -61,6 +62,13 @@ class App(tk.Tk):
             )
 
         r = len(rows)
+        ttk.Checkbutton(
+            form,
+            text="제조사까지 함께 조회 (2단계, 전국/품명 조회 - 체크 해제하면 계약업체명 결과만 빠르게 확인)",
+            variable=self.include_maker_search_var,
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=3)
+
+        r += 1
         ttk.Label(form, text="서비스키").grid(row=r, column=0, sticky="w", pady=3)
         ttk.Entry(form, textvariable=self.service_key_var, width=40, show="*").grid(
             row=r, column=1, sticky="we", pady=3, columnspan=2
@@ -109,6 +117,7 @@ class App(tk.Tk):
         begin_date = self.begin_date_var.get().strip()
         end_date = self.end_date_var.get().strip()
         service_key = self.service_key_var.get().strip()
+        include_maker_search = self.include_maker_search_var.get()
 
         if not service_key:
             messagebox.showerror("오류", "서비스키를 입력해주세요.")
@@ -116,7 +125,7 @@ class App(tk.Tk):
         if not corp_name:
             messagebox.showerror("오류", "업체명을 입력해주세요.")
             return
-        if not category:
+        if include_maker_search and not category:
             proceed = messagebox.askyesno(
                 "확인",
                 "품명을 비워두면 2단계 조회가 전국 모든 회사의 데이터를 조회합니다(느릴 수 있음). "
@@ -133,15 +142,18 @@ class App(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_in_background,
-            args=(corp_name, category, spec, begin_date, end_date, service_key),
+            args=(corp_name, category, spec, begin_date, end_date, service_key, include_maker_search),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_in_background(self, corp_name, category, spec, begin_date, end_date, service_key):
+    def _run_in_background(
+        self, corp_name, category, spec, begin_date, end_date, service_key, include_maker_search,
+    ):
         try:
             result = core.run_query(
-                corp_name, category, spec, begin_date, end_date, service_key, log=self._log
+                corp_name, category, spec, begin_date, end_date, service_key,
+                include_maker_search=include_maker_search, log=self._log,
             )
             saved_path = None
             if result["ok"]:
