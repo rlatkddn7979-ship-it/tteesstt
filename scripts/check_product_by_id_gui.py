@@ -10,6 +10,7 @@ check_product_by_id.py를 위한 간단한 GUI (진단용 - 물품식별번호 �
     python3 scripts/check_product_by_id_gui.py
 """
 
+import datetime
 import os
 import queue
 import threading
@@ -36,22 +37,35 @@ class App(tk.Tk):
         form.pack(fill="x")
 
         self.product_id_var = tk.StringVar(value="")
+        today = datetime.date.today()
+        self.begin_date_var = tk.StringVar(
+            value=(today - datetime.timedelta(days=3 * 365)).strftime("%Y%m%d")
+        )
+        self.end_date_var = tk.StringVar(value=today.strftime("%Y%m%d"))
         self.service_key_var = tk.StringVar(value=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
 
-        ttk.Label(form, text="물품식별번호").grid(row=0, column=0, sticky="w", pady=3)
-        ttk.Entry(form, textvariable=self.product_id_var, width=40).grid(
-            row=0, column=1, sticky="we", pady=3, columnspan=2
-        )
+        rows = [
+            ("물품식별번호", self.product_id_var),
+            ("조회 시작일(YYYYMMDD)", self.begin_date_var),
+            ("조회 종료일(YYYYMMDD)", self.end_date_var),
+        ]
+        for i, (label, var) in enumerate(rows):
+            ttk.Label(form, text=label).grid(row=i, column=0, sticky="w", pady=3)
+            ttk.Entry(form, textvariable=var, width=40).grid(
+                row=i, column=1, sticky="we", pady=3, columnspan=2
+            )
 
-        ttk.Label(form, text="서비스키").grid(row=1, column=0, sticky="w", pady=3)
+        r = len(rows)
+        ttk.Label(form, text="서비스키").grid(row=r, column=0, sticky="w", pady=3)
         ttk.Entry(form, textvariable=self.service_key_var, width=40, show="*").grid(
-            row=1, column=1, sticky="we", pady=3, columnspan=2
+            row=r, column=1, sticky="we", pady=3, columnspan=2
         )
 
         form.columnconfigure(1, weight=1)
 
+        r += 1
         btn_row = ttk.Frame(form)
-        btn_row.grid(row=2, column=0, columnspan=3, pady=(10, 0), sticky="w")
+        btn_row.grid(row=r, column=0, columnspan=3, pady=(10, 0), sticky="w")
         self.run_button = ttk.Button(btn_row, text="조회 시작", command=self._start_query)
         self.run_button.pack(side="left")
         self.status_var = tk.StringVar(value="대기 중")
@@ -85,6 +99,8 @@ class App(tk.Tk):
             return
 
         product_id = self.product_id_var.get().strip()
+        begin_date = self.begin_date_var.get().strip()
+        end_date = self.end_date_var.get().strip()
         service_key = self.service_key_var.get().strip()
 
         if not service_key:
@@ -102,14 +118,14 @@ class App(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_in_background,
-            args=(product_id, service_key),
+            args=(product_id, begin_date, end_date, service_key),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_in_background(self, product_id, service_key):
+    def _run_in_background(self, product_id, begin_date, end_date, service_key):
         try:
-            result = core.lookup_product(product_id, service_key, log=self._log)
+            result = core.lookup_product(product_id, service_key, begin_date, end_date, log=self._log)
             self.after(0, self._on_done, result)
         except Exception as e:
             self.after(0, self._on_error, e)
