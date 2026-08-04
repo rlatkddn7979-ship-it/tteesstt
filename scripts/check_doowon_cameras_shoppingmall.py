@@ -53,8 +53,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 def _resolve_output_path(path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(SCRIPT_DIR, path)
 
-# 품명 필터 없이 전국 데이터를 다 받아오게 되는 사고를 막기 위한 안전장치.
-MAX_ITEMS = 8000
+# 무한루프 방지용 안전장치일 뿐, 실제 사용 상한이 아니다. 품명 없이(전국) 조회하면
+# 정상적으로 수십만 건까지 나올 수 있으므로(예: 94만 건), 너무 낮게 잡으면 실제 데이터에
+# 도달하기도 전에 조회가 중단되어 원하는 물품을 놓치게 된다.
+MAX_ITEMS = 2_000_000
 
 NAME_FIELD = "prdctClsfcNoNm"  # 품명
 DTIL_NAME_FIELD = "dtilPrdctClsfcNoNm"  # 세부품명
