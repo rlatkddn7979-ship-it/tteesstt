@@ -28,6 +28,7 @@ import datetime
 import json
 import os
 import time
+import uuid
 
 import requests
 from bs4 import BeautifulSoup
@@ -46,6 +47,37 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _resolve_output_path(path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(SCRIPT_DIR, path)
+
+
+def _timestamped_path(path):
+    # 파일명에 이미 실행 시각이 들어있을 수 있으므로(자동 생성 파일명), 짧은 임의 문자열을
+    # 붙여 항상 새로운 이름이 되게 한다.
+    root, ext = os.path.splitext(path)
+    suffix = uuid.uuid4().hex[:6]
+    return f"{root}_retry{suffix}{ext}"
+
+
+def _write_with_fallback(write_fn, path, log):
+    """write_fn(경로)로 저장을 시도한다. 잠겨 있어 실패하면 타임스탬프를 붙인
+    새 파일명으로 한 번 더 시도한다 (원인을 진단하는 대신 확실히 진행되게 한다)."""
+    try:
+        write_fn(path)
+        return path
+    except PermissionError:
+        fallback = _timestamped_path(path)
+        log(
+            f"   '{path}' 파일을 저장할 수 없어(다른 프로그램에서 사용 중이거나 잠겨 있을 수 있음) "
+            f"'{fallback}'(으)로 대신 저장합니다."
+        )
+        try:
+            write_fn(fallback)
+        except PermissionError as e:
+            raise PermissionError(
+                f"'{fallback}'로도 저장할 수 없습니다. 해당 폴더에 쓰기 권한이 없거나 "
+                "(예: OneDrive 동기화 중, 보안 프로그램 차단 등) 폴더 자체의 문제일 수 있습니다. "
+                "다른 폴더로 저장 경로를 바꿔서 시도해보세요."
+            ) from e
+        return fallback
 
 
 # 조회할 (goodsClsfcNo, goodsIdntfcNo) 목록 (CLI로 직접 실행할 때 쓰는 기본값)
@@ -199,29 +231,37 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
     txt_path = _resolve_output_path(f"{basename}_paste.txt")
     json_path = _resolve_output_path(f"{basename}.json")
 
-    # 1) CSV (표 형태, 항목=열, 한 상품=한 행) - 여러 건을 한 표로 볼 때 사용
-    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES + ["_요청goodsIdntfcNo"])
-        writer.writeheader()
-        writer.writerows(rows)
+    log(f"\n결과 저장을 시작합니다 (총 {len(rows) + len(fail_list)}건 중 {len(rows)}건 성공)...")
 
-    # 2) 값만 세로로 나열 (라벨 없이, 항목 순서대로 한 줄씩)
-    with open(txt_path, "w", encoding="utf-8-sig") as f:
-        for row in rows:
-            for field in FIELDNAMES:
-                f.write(f"{row.get(field, '')}\n")
-            f.write("\n")  # 상품 간 구분용 빈 줄
+    def save_csv(p):
+        with open(p, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=FIELDNAMES + ["_요청goodsIdntfcNo"])
+            writer.writeheader()
+            writer.writerows(rows)
 
-    # 3) JSON (각 상품을 dict로, 프로그램에서 다시 읽어 문서 표에 채울 때 사용)
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(rows, f, ensure_ascii=False, indent=2)
+    def save_txt(p):
+        with open(p, "w", encoding="utf-8-sig") as f:
+            for row in rows:
+                for field in FIELDNAMES:
+                    f.write(f"{row.get(field, '')}\n")
+                f.write("\n")  # 상품 간 구분용 빈 줄
 
-    log(f"\n총 {len(rows) + len(fail_list)}건 중 {len(rows)}건을 저장했습니다.")
-    log(f" - 표 형태(가로): {csv_path}")
-    log(f" - 붙여넣기용(값만, 항목순서대로 한 줄씩): {txt_path}")
-    log(f" - JSON(문서 자동 채우기용): {json_path}")
+    def save_json(p):
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+
+    log(f" - 표 형태(가로) 저장 시도: {csv_path}")
+    csv_saved = _write_with_fallback(save_csv, csv_path, log)
+    log(f" - 붙여넣기용(값만) 저장 시도: {txt_path}")
+    txt_saved = _write_with_fallback(save_txt, txt_path, log)
+    log(f" - JSON 저장 시도: {json_path}")
+    json_saved = _write_with_fallback(save_json, json_path, log)
+
+    log(f"\n결과를 저장했습니다: {csv_saved}, {txt_saved}, {json_saved}")
     if fail_list:
         log(f"실패한 goodsIdntfcNo: {', '.join(fail_list)}")
+
+    csv_path, txt_path, json_path = csv_saved, txt_saved, json_saved
 
     return {"csv": csv_path, "txt": txt_path, "json": json_path}
 
