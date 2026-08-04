@@ -5,9 +5,11 @@
 대상 예시:
     https://goods.g2b.go.kr:8053/search/productSearchView.do?goodsClsfcNo=4617162201&goodsIdntfcNo=26181419
 
-추출 항목 (문서 표와 동일):
-    물품목록번호, 물품분류번호, 물품식별번호, 품명, 세부품명, 단위,
-    상품원산지국가명, 모델명, 용도, 구성, 옵션/기타
+추출 항목:
+    페이지의 "공통속성정보"/"개별속성정보" 표에 있는 라벨:값 쌍을 전부 가져온다.
+    물품목록번호/물품분류번호/물품식별번호/품명/세부품명/단위/상품원산지국가명/
+    모델명/용도/구성/옵션/기타는 항상 먼저 오도록 고정하고(문서 표와 동일한 순서),
+    상품마다 다르게 붙어있는 추가 항목이 있으면 그 뒤에 이름순으로 같이 저장한다.
 
 사용법 (CLI):
     1. pip install requests beautifulsoup4
@@ -171,18 +173,32 @@ def extract_label_value_pairs(html: str) -> dict:
 
 
 def extract_fields(html: str) -> dict:
+    """페이지에 있는 라벨:값 쌍을 전부 가져온다 (문서 표에 정리된 11개 항목으로
+    제한하지 않고, 상품마다 다르게 붙어있는 추가 항목도 그대로 담는다).
+    후보 라벨(예: '세부품명번호')은 문서 표와 같은 표준 이름('세부품명')으로 합친다."""
     pairs = extract_label_value_pairs(html)
 
-    row = {}
+    row = dict(pairs)
     for field, candidates in FIELD_LABEL_CANDIDATES.items():
-        value = ""
         for cand in candidates:
-            if cand in pairs and pairs[cand]:
-                value = pairs[cand]
-                break
-        row[field] = value
+            if cand in row and cand != field:
+                if not row.get(field):
+                    row[field] = row[cand]
+                del row[cand]
+        row.setdefault(field, "")
 
     return row
+
+
+def all_fieldnames(rows: list) -> list:
+    """문서 표에 정리된 11개 항목을 먼저 놓고, 상품마다 추가로 발견된 항목은
+    뒤에 정렬해서 붙인 열 순서를 만든다 (CSV/TXT 저장에 공통으로 사용)."""
+    extra = set()
+    for row in rows:
+        for key in row.keys():
+            if key not in FIELDNAMES and key != "_요청goodsIdntfcNo":
+                extra.add(key)
+    return FIELDNAMES + sorted(extra)
 
 
 def run_crawl(goods_clsfc_no: str, goods_idntfc_no_list: list, request_delay: float = REQUEST_DELAY, log=print) -> dict:
@@ -233,17 +249,21 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
 
     log(f"\n결과 저장을 시작합니다 (총 {len(rows) + len(fail_list)}건 중 {len(rows)}건 성공)...")
 
+    fieldnames = all_fieldnames(rows)
+    if len(fieldnames) > len(FIELDNAMES):
+        log(f"(문서 표의 11개 항목 외에 추가로 발견된 항목 {len(fieldnames) - len(FIELDNAMES)}개도 함께 저장합니다)")
+
     def save_csv(p):
         with open(p, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=FIELDNAMES + ["_요청goodsIdntfcNo"])
+            writer = csv.DictWriter(f, fieldnames=fieldnames + ["_요청goodsIdntfcNo"])
             writer.writeheader()
             writer.writerows(rows)
 
     def save_txt(p):
         with open(p, "w", encoding="utf-8-sig") as f:
             for row in rows:
-                for field in FIELDNAMES:
-                    f.write(f"{row.get(field, '')}\n")
+                for field in fieldnames:
+                    f.write(f"{field}: {row.get(field, '')}\n")
                 f.write("\n")  # 상품 간 구분용 빈 줄
 
     def save_json(p):
