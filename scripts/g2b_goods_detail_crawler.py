@@ -9,11 +9,14 @@
     물품목록번호, 물품분류번호, 물품식별번호, 품명, 세부품명, 단위,
     상품원산지국가명, 모델명, 용도, 구성, 옵션/기타
 
-사용법:
+사용법 (CLI):
     1. pip install requests beautifulsoup4
     2. python g2b_goods_detail_crawler.py
-    3. 실행이 끝나면 생성된 g2b_output.json 파일을 Claude에게 다시 업로드
+    3. 실행이 끝나면 생성된 g2b_output_*.json 파일을 Claude에게 다시 업로드
        -> Claude가 그 JSON을 읽어서 docx 문서에 표를 자동으로 추가해 드립니다.
+
+GUI로 실행하려면 g2b_goods_detail_crawler_gui.py 를 실행하세요. 물품식별번호
+목록을 화면에서 붙여넣기로 바로 바꿔서 조회할 수 있습니다.
 
 주의:
     - 정부 사이트이므로 과도한 요청은 피하고, 요청 간 딜레이(REQUEST_DELAY)를 유지하세요.
@@ -21,8 +24,11 @@
 """
 
 import csv
+import datetime
 import json
+import os
 import time
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -34,11 +40,15 @@ HEADERS = {
     )
 }
 REQUEST_DELAY = 0.5  # 요청 사이 대기 시간(초)
-OUTPUT_FILE = "g2b_output.csv"
-OUTPUT_FILE_VERTICAL = "g2b_output_paste.txt"
-OUTPUT_FILE_JSON = "g2b_output.json"
 
-# 조회할 (goodsClsfcNo, goodsIdntfcNo) 목록
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_output_path(path: str) -> str:
+    return path if os.path.isabs(path) else os.path.join(SCRIPT_DIR, path)
+
+
+# 조회할 (goodsClsfcNo, goodsIdntfcNo) 목록 (CLI로 직접 실행할 때 쓰는 기본값)
 FIXED_GOODS_CLSFC_NO = "4617162201"
 
 GOODS_IDNTFC_NO_LIST = [
@@ -52,11 +62,6 @@ GOODS_IDNTFC_NO_LIST = [
     "25983401", "25512908", "25983393", "25549621", "25254929", "25674933",
     "25512910", "25983400", "25983398", "25983394", "25254931", "25254930",
     "25983395", "25674934", "25549620", "25383348",
-]
-
-TARGETS = [
-    {"goodsClsfcNo": FIXED_GOODS_CLSFC_NO, "goodsIdntfcNo": no}
-    for no in GOODS_IDNTFC_NO_LIST
 ]
 
 # 추출할 항목명 (출력 컬럼 순서) : 페이지에서 매칭할 라벨 후보들
@@ -73,6 +78,22 @@ FIELD_LABEL_CANDIDATES = {
     "구성": ["구성"],
     "옵션/기타": ["옵션/기타", "옵션기타"],
 }
+
+FIELDNAMES = list(FIELD_LABEL_CANDIDATES.keys())
+
+
+def parse_goods_idntfc_no_list(text: str) -> list:
+    """줄바꿈/쉼표/공백으로 구분된 텍스트에서 물품식별번호 목록을 뽑아낸다.
+    (GUI 텍스트 박스에 그대로 붙여넣은 내용을 파싱하는 용도)"""
+    raw = text.replace(",", "\n").splitlines()
+    result = []
+    seen = set()
+    for line in raw:
+        no = line.strip()
+        if no and no not in seen:
+            seen.add(no)
+            result.append(no)
+    return result
 
 
 def fetch_html(params: dict) -> str:
@@ -132,46 +153,79 @@ def extract_fields(html: str) -> dict:
     return row
 
 
-if __name__ == "__main__":
-    fieldnames = list(FIELD_LABEL_CANDIDATES.keys())
+def run_crawl(goods_clsfc_no: str, goods_idntfc_no_list: list, request_delay: float = REQUEST_DELAY, log=print) -> dict:
+    """goods_idntfc_no_list를 순회하며 상세페이지를 하나씩 조회한다.
+
+    반환값: {"rows": [...], "fail_list": [...]}
+    """
+    targets = [
+        {"goodsClsfcNo": goods_clsfc_no, "goodsIdntfcNo": no}
+        for no in goods_idntfc_no_list
+    ]
+
     rows = []
     fail_list = []
-
-    total = len(TARGETS)
-    for i, target in enumerate(TARGETS, start=1):
+    total = len(targets)
+    for i, target in enumerate(targets, start=1):
         tag = f"[{i}/{total}] goodsIdntfcNo={target['goodsIdntfcNo']}"
         try:
             html = fetch_html(target)
             row = extract_fields(html)
             row["_요청goodsIdntfcNo"] = target["goodsIdntfcNo"]  # 매칭 확인용
             rows.append(row)
-            print(f"{tag} -> 완료")
+            log(f"{tag} -> 완료")
         except requests.RequestException as e:
-            print(f"{tag} -> 실패: {e}")
+            log(f"{tag} -> 실패: {e}")
             fail_list.append(target["goodsIdntfcNo"])
 
-        time.sleep(REQUEST_DELAY)
+        if i < total:
+            time.sleep(request_delay)
+
+    return {"rows": rows, "fail_list": fail_list}
+
+
+def default_output_basename() -> str:
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"g2b_output_{timestamp}"
+
+
+def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) -> dict:
+    """CSV(표), TXT(붙여넣기용), JSON 세 가지 형식으로 결과를 저장한다.
+
+    반환값: {"csv": 경로, "txt": 경로, "json": 경로}
+    """
+    basename = basename or default_output_basename()
+    csv_path = _resolve_output_path(f"{basename}.csv")
+    txt_path = _resolve_output_path(f"{basename}_paste.txt")
+    json_path = _resolve_output_path(f"{basename}.json")
 
     # 1) CSV (표 형태, 항목=열, 한 상품=한 행) - 여러 건을 한 표로 볼 때 사용
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames + ["_요청goodsIdntfcNo"])
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES + ["_요청goodsIdntfcNo"])
         writer.writeheader()
         writer.writerows(rows)
 
     # 2) 값만 세로로 나열 (라벨 없이, 항목 순서대로 한 줄씩)
-    with open(OUTPUT_FILE_VERTICAL, "w", encoding="utf-8-sig") as f:
+    with open(txt_path, "w", encoding="utf-8-sig") as f:
         for row in rows:
-            for field in fieldnames:
+            for field in FIELDNAMES:
                 f.write(f"{row.get(field, '')}\n")
             f.write("\n")  # 상품 간 구분용 빈 줄
 
     # 3) JSON (각 상품을 dict로, 프로그램에서 다시 읽어 문서 표에 채울 때 사용)
-    with open(OUTPUT_FILE_JSON, "w", encoding="utf-8") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
-    print(f"\n총 {total}건 중 {len(rows)}건을 저장했습니다.")
-    print(f" - 표 형태(가로): {OUTPUT_FILE}")
-    print(f" - 붙여넣기용(값만, 항목순서대로 한 줄씩): {OUTPUT_FILE_VERTICAL}")
-    print(f" - JSON(문서 자동 채우기용): {OUTPUT_FILE_JSON}")
+    log(f"\n총 {len(rows) + len(fail_list)}건 중 {len(rows)}건을 저장했습니다.")
+    log(f" - 표 형태(가로): {csv_path}")
+    log(f" - 붙여넣기용(값만, 항목순서대로 한 줄씩): {txt_path}")
+    log(f" - JSON(문서 자동 채우기용): {json_path}")
     if fail_list:
-        print(f"실패한 goodsIdntfcNo: {', '.join(fail_list)}")
+        log(f"실패한 goodsIdntfcNo: {', '.join(fail_list)}")
+
+    return {"csv": csv_path, "txt": txt_path, "json": json_path}
+
+
+if __name__ == "__main__":
+    result = run_crawl(FIXED_GOODS_CLSFC_NO, GOODS_IDNTFC_NO_LIST, log=print)
+    write_outputs(result["rows"], result["fail_list"], log=print)
