@@ -277,6 +277,17 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
         table_path = _resolve_output_path(f"{basename}.xlsx")
         log(f" - 표 형태(엑셀, 열 너비 자동조정) 저장 시도: {table_path}")
         table_saved = _write_with_fallback(save_xlsx, table_path, log)
+        if not os.path.exists(table_saved):
+            # wb.save()는 예외 없이 끝났는데 실제 파일이 없는 경우(보안 프로그램이 저장
+            # 직후 오피스 문서 형식만 조용히 지우는 경우가 있었음). CSV로 대신 저장한다.
+            log(
+                f"\n엑셀 저장은 오류 없이 끝났는데 실제 파일이 생기지 않았습니다: {table_saved} "
+                "(보안 프로그램이 저장 직후 오피스 문서 형식만 조용히 삭제하고 있을 수 있습니다). "
+                "CSV로 대신 저장합니다."
+            )
+            table_path = _resolve_output_path(f"{basename}.csv")
+            log(f" - 표 형태(CSV) 저장 시도: {table_path}")
+            table_saved = _write_with_fallback(save_csv, table_path, log)
     else:
         table_path = _resolve_output_path(f"{basename}.csv")
         log(f" - 표 형태(CSV, openpyxl 미설치로 열 너비 자동조정 불가) 저장 시도: {table_path}")
