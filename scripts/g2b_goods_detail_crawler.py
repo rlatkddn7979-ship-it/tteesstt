@@ -28,6 +28,7 @@ import datetime
 import json
 import os
 import time
+import unicodedata
 import uuid
 
 import requests
@@ -78,6 +79,13 @@ def _write_with_fallback(write_fn, path, log):
                 "다른 폴더로 저장 경로를 바꿔서 시도해보세요."
             ) from e
         return fallback
+
+
+def _display_width(text: str) -> int:
+    """엑셀 열 너비 계산용 텍스트 폭. 한글/한자 등 동아시아 넓은 문자는 라틴 문자의
+    약 2배 폭으로 표시되는데, 그냥 len()으로 계산하면 절반 정도로 좁게 잡혀서
+    한글이 많이 들어간 열이 실제로는 잘려 보이는 문제가 있었다."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in str(text))
 
 
 # 조회할 (goodsClsfcNo, goodsIdntfcNo) 목록 (CLI로 직접 실행할 때 쓰는 기본값)
@@ -256,8 +264,8 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
             ws.append(row)
         for col_idx, header in enumerate(table_headers, start=1):
             width = (
-                max(len(header), *(len(str(v)) for v in (r[col_idx - 1] for r in table_rows)))
-                if table_rows else len(header)
+                max(_display_width(header), *(_display_width(r[col_idx - 1]) for r in table_rows))
+                if table_rows else _display_width(header)
             )
             ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(width + 2, 60)
         wb.save(p)
