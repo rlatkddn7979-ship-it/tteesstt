@@ -219,22 +219,48 @@ def default_output_basename() -> str:
 
 
 def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) -> dict:
-    """CSV(표), TXT(붙여넣기용), JSON 세 가지 형식으로 결과를 저장한다.
+    """표 형태(엑셀 또는 CSV), TXT(붙여넣기용), JSON 세 가지 형식으로 결과를 저장한다.
 
-    반환값: {"csv": 경로, "txt": 경로, "json": 경로}
+    표 형태는 openpyxl이 설치되어 있으면 .xlsx로 저장하고, 텍스트 길이에 맞춰
+    열 너비를 자동으로 넓힌다. openpyxl이 없으면 .csv로 대신 저장한다(열 너비 개념이
+    없는 순수 텍스트 형식이라, 엑셀에서 열었을 때 너비가 자동으로 맞춰지지는 않는다).
+
+    반환값: {"table": 경로, "txt": 경로, "json": 경로}
     """
     basename = basename or default_output_basename()
-    csv_path = _resolve_output_path(f"{basename}.csv")
     txt_path = _resolve_output_path(f"{basename}_paste.txt")
     json_path = _resolve_output_path(f"{basename}.json")
 
     log(f"\n결과 저장을 시작합니다 (총 {len(rows) + len(fail_list)}건 중 {len(rows)}건 성공)...")
 
+    try:
+        import openpyxl
+    except ImportError:
+        openpyxl = None
+
+    table_headers = FIELDNAMES + ["_요청goodsIdntfcNo"]
+    table_rows = [[row.get(field, "") for field in table_headers] for row in rows]
+
     def save_csv(p):
         with open(p, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=FIELDNAMES + ["_요청goodsIdntfcNo"])
-            writer.writeheader()
-            writer.writerows(rows)
+            writer = csv.writer(f)
+            writer.writerow(table_headers)
+            writer.writerows(table_rows)
+
+    def save_xlsx(p):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "결과"
+        ws.append(table_headers)
+        for row in table_rows:
+            ws.append(row)
+        for col_idx, header in enumerate(table_headers, start=1):
+            width = (
+                max(len(header), *(len(str(v)) for v in (r[col_idx - 1] for r in table_rows)))
+                if table_rows else len(header)
+            )
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(width + 2, 60)
+        wb.save(p)
 
     def save_txt(p):
         with open(p, "w", encoding="utf-8-sig") as f:
@@ -247,20 +273,26 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
         with open(p, "w", encoding="utf-8") as f:
             json.dump(rows, f, ensure_ascii=False, indent=2)
 
-    log(f" - 표 형태(가로) 저장 시도: {csv_path}")
-    csv_saved = _write_with_fallback(save_csv, csv_path, log)
+    if openpyxl is not None:
+        table_path = _resolve_output_path(f"{basename}.xlsx")
+        log(f" - 표 형태(엑셀, 열 너비 자동조정) 저장 시도: {table_path}")
+        table_saved = _write_with_fallback(save_xlsx, table_path, log)
+    else:
+        table_path = _resolve_output_path(f"{basename}.csv")
+        log(f" - 표 형태(CSV, openpyxl 미설치로 열 너비 자동조정 불가) 저장 시도: {table_path}")
+        log("   'pip install openpyxl' 설치 후 다시 실행하면 열 너비가 자동으로 맞춰진 엑셀로 저장됩니다.")
+        table_saved = _write_with_fallback(save_csv, table_path, log)
+
     log(f" - 붙여넣기용(값만) 저장 시도: {txt_path}")
     txt_saved = _write_with_fallback(save_txt, txt_path, log)
     log(f" - JSON 저장 시도: {json_path}")
     json_saved = _write_with_fallback(save_json, json_path, log)
 
-    log(f"\n결과를 저장했습니다: {csv_saved}, {txt_saved}, {json_saved}")
+    log(f"\n결과를 저장했습니다: {table_saved}, {txt_saved}, {json_saved}")
     if fail_list:
         log(f"실패한 goodsIdntfcNo: {', '.join(fail_list)}")
 
-    csv_path, txt_path, json_path = csv_saved, txt_saved, json_saved
-
-    return {"csv": csv_path, "txt": txt_path, "json": json_path}
+    return {"table": table_saved, "txt": txt_saved, "json": json_saved}
 
 
 if __name__ == "__main__":

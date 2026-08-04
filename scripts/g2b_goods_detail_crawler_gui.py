@@ -145,7 +145,7 @@ class App(tk.Tk):
         messagebox.showinfo(
             "완료",
             f"성공: {ok_count}건\n실패: {fail_count}건\n\n"
-            f"저장 위치:\n{paths['csv']}\n{paths['txt']}\n{paths['json']}",
+            f"저장 위치:\n{paths['table']}\n{paths['txt']}\n{paths['json']}",
         )
 
     def _on_error(self, error):
