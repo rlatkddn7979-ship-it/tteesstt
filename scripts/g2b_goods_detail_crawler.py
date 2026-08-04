@@ -232,6 +232,8 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
     표 형태는 openpyxl이 설치되어 있으면 .xlsx로 저장하고, 텍스트 길이에 맞춰
     열 너비를 자동으로 넓힌다. openpyxl이 없으면 .csv로 대신 저장한다(열 너비 개념이
     없는 순수 텍스트 형식이라, 엑셀에서 열었을 때 너비가 자동으로 맞춰지지는 않는다).
+    제조업체명이 이전 행과 달라지는 지점마다 빈 줄을 한 줄 끼워서 업체별로
+    구분하기 쉽게 한다.
 
     반환값: {"table": 경로, "txt": 경로, "json": 경로}
     """
@@ -247,7 +249,14 @@ def write_outputs(rows: list, fail_list: list, basename: str = None, log=print) 
         openpyxl = None
 
     table_headers = FIELDNAMES + ["_요청goodsIdntfcNo"]
-    table_rows = [[row.get(field, "") for field in table_headers] for row in rows]
+    table_rows = []
+    prev_maker = None
+    for i, row in enumerate(rows):
+        maker = row.get("제조업체명", "")
+        if i > 0 and maker != prev_maker:
+            table_rows.append([""] * len(table_headers))  # 제조업체명이 바뀌는 구간에 빈 줄
+        table_rows.append([row.get(field, "") for field in table_headers])
+        prev_maker = maker
 
     def save_csv(p):
         with open(p, "w", newline="", encoding="utf-8-sig") as f:
