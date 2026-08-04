@@ -131,7 +131,15 @@ def extract_zoom_ratio(option_text: str) -> str:
     value = m.group(1).strip()
     # "광학40배줌/디지털12배줌"처럼 슬래시로 디지털 배줌이 붙어있으면 광학(앞부분)만 남긴다.
     # "광학" 표기 없이 그냥 "30배줌"만 있는 경우는 그대로 둔다(슬래시가 없어서 영향 없음).
-    return value.split("/")[0].strip()
+    value = value.split("/")[0].strip()
+    # 쉼표가 아니라 마침표로 다음 항목이 이어붙은 예외 케이스
+    # (예: "광학3배줌. 초점거리:3.3~9.9mm")가 있어서, "초점거리"가 남아있으면 그 앞까지만 남긴다.
+    value = value.split("초점거리")[0].strip()
+    value = value.rstrip(" .,")
+    # "광학" 접두어는 뗀다 (예: "광학40배줌" -> "40배줌")
+    if value.startswith("광학"):
+        value = value[len("광학"):]
+    return value.strip()
 
 
 FIELDNAMES = ["물품식별번호", "모델명", "옵션/기타", "배율", "제조업체명", "촬상소자", "촬영소자화소수", "형태"]
