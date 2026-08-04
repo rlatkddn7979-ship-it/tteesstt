@@ -27,6 +27,7 @@ import csv
 import datetime
 import json
 import os
+import re
 import time
 import unicodedata
 import uuid
@@ -115,7 +116,20 @@ FIELD_LABEL_CANDIDATES = {
     "형태": ["형태"],
 }
 
-FIELDNAMES = list(FIELD_LABEL_CANDIDATES.keys())
+# "옵션/기타" 안에 "배율:광학40배줌/디지털12배줌, 초점거리:6.6~264mm" 처럼 쉼표로
+# 구분된 항목들이 같이 적혀 있어서, "배율:" 다음부터 다음 쉼표 전까지만 뽑아서
+# 별도 컬럼으로 만든다 (줌 없는 고정렌즈 카메라는 "배율" 항목 자체가 없어서 빈 값).
+ZOOM_RATIO_PATTERN = re.compile(r"배율\s*[:：]\s*([^,，]+)")
+
+
+def extract_zoom_ratio(option_text: str) -> str:
+    if not option_text:
+        return ""
+    m = ZOOM_RATIO_PATTERN.search(option_text)
+    return m.group(1).strip() if m else ""
+
+
+FIELDNAMES = ["물품식별번호", "모델명", "옵션/기타", "배율", "제조업체명", "촬상소자", "촬영소자화소수", "형태"]
 
 
 def parse_goods_idntfc_no_list(text: str) -> list:
@@ -186,6 +200,8 @@ def extract_fields(html: str) -> dict:
                 value = pairs[cand]
                 break
         row[field] = value
+
+    row["배율"] = extract_zoom_ratio(row.get("옵션/기타", ""))
 
     return row
 
