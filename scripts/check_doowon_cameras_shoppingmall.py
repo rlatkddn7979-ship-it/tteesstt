@@ -317,7 +317,7 @@ def run_query(
             "resultCode/resultMsg를 참고해서 파라미터를 조정해주세요."
         )
         return {"ok": False, "error": "no_working_operation", "all_items": [],
-                "camera_items": [], "distinct_names": [], "name_field": None}
+                "camera_items": [], "distinct_names": [], "name_field": None, "raw_items": all_items}
 
     log(f"\n품명 필터로 조회된 전체 물품 수(업체명 필터링 전): {len(all_items)}")
 
@@ -337,7 +337,7 @@ def run_query(
         log(f"'{corp_name}'이(가) 계약업체명 또는 제조사로 들어간 물품이 없습니다.")
         log("표기가 다를 수 있습니다(예: '(주)두원전자통신' 등). 다른 표기로 다시 시도해보세요.")
         return {"ok": False, "error": "no_matching_corp_or_maker", "all_items": [],
-                "camera_items": [], "distinct_names": [], "name_field": None}
+                "camera_items": [], "distinct_names": [], "name_field": None, "raw_items": all_items}
 
     name_field = NAME_FIELD
     category_counts = collections.Counter(str(item.get(name_field, "")) for item in matched_items)
@@ -383,6 +383,7 @@ def run_query(
         "camera_items": camera_items,
         "distinct_names": distinct_names,
         "name_field": name_field,
+        "raw_items": all_items,
     }
 
 
@@ -517,6 +518,31 @@ def write_output(camera_items, corp_name, category, spec, begin_date, end_date, 
         return saved_path
 
 
+def write_raw_output(raw_items, output_path, log=print):
+    """업체명/제조사 필터링 전, 조회된 원본 물품 전체를 CSV로 저장한다.
+
+    수십만 건 규모가 될 수 있어서 openpyxl(.xlsx)은 메모리/속도 부담이 크므로
+    항상 CSV로 저장한다 (엑셀에서도 그대로 열어서 필터/정렬할 수 있음).
+    """
+    output_path = _resolve_output_path(output_path)
+    if not output_path.lower().endswith(".csv"):
+        output_path = os.path.splitext(output_path)[0] + ".csv"
+    log(f"\n원본 데이터({len(raw_items)}건) 저장 경로: {output_path}")
+
+    headers = [header for header, _ in EXPORT_COLUMNS]
+
+    def save_csv(p):
+        with open(p, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for item in raw_items:
+                writer.writerow([item.get(field, "") for _, field in EXPORT_COLUMNS])
+
+    saved_path = _write_with_fallback(save_csv, output_path, log)
+    log(f"원본 데이터를 저장했습니다: {saved_path}")
+    return saved_path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corp-name", default="두원전자통신", help="계약업체명 또는 제조사로 찾을 이름")
@@ -547,6 +573,12 @@ def main():
         default=None,
         help="결과를 저장할 엑셀 파일 경로. 생략하면 '업체명_품명_규격_실행시각.xlsx'로 자동 생성",
     )
+    parser.add_argument(
+        "--save-raw",
+        action="store_true",
+        help="업체명/제조사로 걸러내기 전, 조회된 원본 물품 전체도 별도 CSV로 저장 "
+             "(품명 없이 조회하면 수십만 건이 될 수 있어 항상 CSV로 저장됨)",
+    )
     args = parser.parse_args()
 
     service_key = os.environ.get("DATA_GO_KR_SERVICE_KEY")
@@ -564,6 +596,12 @@ def main():
         service_key,
         num_of_rows=args.num_of_rows,
     )
+
+    if args.save_raw and result.get("raw_items"):
+        raw_output_path = default_output_filename(
+            args.corp_name, args.category, args.spec, ext="_원본전체.csv"
+        )
+        write_raw_output(result["raw_items"], raw_output_path)
 
     if not result["ok"]:
         sys.exit(2)

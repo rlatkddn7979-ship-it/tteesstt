@@ -47,6 +47,7 @@ class App(tk.Tk):
         )
         self.end_date_var = tk.StringVar(value=today.strftime("%Y%m%d"))
         self.service_key_var = tk.StringVar(value=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
+        self.save_raw_var = tk.BooleanVar(value=False)
 
         rows = [
             ("업체명 (계약업체명 또는 제조사, 둘 중 하나만 맞아도 매칭)", self.corp_name_var, None),
@@ -62,6 +63,13 @@ class App(tk.Tk):
             )
 
         r = len(rows)
+        ttk.Checkbutton(
+            form,
+            text="업체명 필터링 전 원본 데이터도 CSV로 저장 (품명 없이 조회하면 수십만 건일 수 있음)",
+            variable=self.save_raw_var,
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=3)
+
+        r += 1
         ttk.Label(form, text="서비스키").grid(row=r, column=0, sticky="w", pady=3)
         ttk.Entry(form, textvariable=self.service_key_var, width=40, show="*").grid(
             row=r, column=1, sticky="we", pady=3, columnspan=2
@@ -110,6 +118,7 @@ class App(tk.Tk):
         begin_date = self.begin_date_var.get().strip()
         end_date = self.end_date_var.get().strip()
         service_key = self.service_key_var.get().strip()
+        save_raw = self.save_raw_var.get()
 
         if not service_key:
             messagebox.showerror("오류", "서비스키를 입력해주세요.")
@@ -133,16 +142,21 @@ class App(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_in_background,
-            args=(corp_name, category, spec, begin_date, end_date, service_key),
+            args=(corp_name, category, spec, begin_date, end_date, service_key, save_raw),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_in_background(self, corp_name, category, spec, begin_date, end_date, service_key):
+    def _run_in_background(self, corp_name, category, spec, begin_date, end_date, service_key, save_raw):
         try:
             result = core.run_query(
                 corp_name, category, spec, begin_date, end_date, service_key, log=self._log
             )
+            if save_raw and result.get("raw_items"):
+                raw_output_path = core.default_output_filename(
+                    corp_name, category, spec, ext="_원본전체.csv"
+                )
+                core.write_raw_output(result["raw_items"], raw_output_path, log=self._log)
             saved_path = None
             if result["ok"]:
                 output_path = core.default_output_filename(corp_name, category, spec)
