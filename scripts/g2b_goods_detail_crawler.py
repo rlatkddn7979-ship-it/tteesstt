@@ -126,7 +126,12 @@ def extract_zoom_ratio(option_text: str) -> str:
     if not option_text:
         return ""
     m = ZOOM_RATIO_PATTERN.search(option_text)
-    return m.group(1).strip() if m else ""
+    if not m:
+        return ""
+    value = m.group(1).strip()
+    # "광학40배줌/디지털12배줌"처럼 슬래시로 디지털 배줌이 붙어있으면 광학(앞부분)만 남긴다.
+    # "광학" 표기 없이 그냥 "30배줌"만 있는 경우는 그대로 둔다(슬래시가 없어서 영향 없음).
+    return value.split("/")[0].strip()
 
 
 FIELDNAMES = ["물품식별번호", "모델명", "옵션/기타", "배율", "제조업체명", "촬상소자", "촬영소자화소수", "형태"]
