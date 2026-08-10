@@ -61,6 +61,7 @@ CANDIDATE_OPERATIONS = [
 # 응답에서 품명/규격(카메라 종류 구분)으로 실제 확인된 필드
 NAME_FIELD = "prdctClsfcNoNm"  # 물품분류번호명 (품명)
 SPEC_FIELD = "prdctSpecNm"  # 규격/모델명 (자유 서술형 설명)
+DLVR_CNDTN_FIELD = "prdctDlvryCndtnNm"  # 물품인도조건명
 
 EXPORT_COLUMNS = [
     ("계약업체명", "cntrctCorpNm"),
@@ -69,6 +70,7 @@ EXPORT_COLUMNS = [
     ("물품식별번호", "prdctIdntNo"),
     ("제조사", "prdctMakrNm"),
     ("원산지", "prdctOrgplceNm"),
+    ("인도조건", "prdctDlvryCndtnNm"),
     ("계약방법", "cntrctMthdNm"),
     ("계약번호", "shopngCntrctNo"),
     ("계약일자", "cntrctDate"),
@@ -203,15 +205,21 @@ def run_query(
     end_date: str,
     service_key: str,
     num_of_rows: int = 999,
+    delivery_condition: str = "현장설치도",
     log=print,
 ) -> dict:
-    """API를 조회하고 회사명/품명/규격으로 필터링한 결과를 dict로 반환한다.
+    """API를 조회하고 회사명/품명/규격/인도조건으로 필터링한 결과를 dict로 반환한다.
+
+    corp_name(업체명)을 지정하면 계약업체명(cntrctCorpNm)으로 서버 조회 범위를 좁힌다(빠름).
+    corp_name을 비우면 대신 품명(prdctClsfcNoNm)으로 서버 조회 범위를 좁힌다 - 이 경우
+    category도 비어있으면 전국 데이터를 다 받아오게 되어 매우 느리니 품명은 지정하는 게 좋다.
 
     category(품명)는 쉼표로 여러 개를 넣을 수 있고("영상감시장치, 보안용카메라"),
     물품 하나는 품명이 하나뿐이므로 그 중 하나라도(OR) prdctClsfcNoNm에 포함되면 매칭된다.
     spec(규격)도 쉼표로 여러 조건을 넣을 수 있지만("200만화소, 4배줌, 블렛형"),
     이건 한 물품의 규격 설명 안에 여러 속성이 같이 적혀 있으므로 전부(AND) 포함돼야 매칭된다.
-    category/spec 둘 다 비워두면 해당 조건은 걸지 않는다.
+    delivery_condition(물품인도조건명)은 prdctDlvryCndtnNm에 포함되면 매칭된다(비우면 필터링 안 함).
+    category/spec/delivery_condition 다 비워두면 해당 조건은 걸지 않는다.
 
     반환값: {"ok": bool, "error": str|None, "all_items": [...],
              "camera_items": [...], "distinct_names": [...], "name_field": str|None}
@@ -220,105 +228,119 @@ def run_query(
     if len(date_chunks) > 1:
         log(f"등록일시 범위가 1년을 넘어서 {len(date_chunks)}개 구간으로 나눠 조회합니다.")
 
+    category_terms = [t.strip() for t in category.split(",") if t.strip()]
+    spec_terms = [t.strip() for t in spec.split(",") if t.strip()]
+
+    use_corp_scope = bool(corp_name.strip())
+    if use_corp_scope:
+        server_terms = [None]  # 계약업체명으로 좁히므로 서버 쪽에 품명 필터는 안 걸어도 됨
+    else:
+        server_terms = category_terms or [""]
+        if not category_terms:
+            log(
+                "\n경고: 업체명과 품명을 둘 다 비워두면 전국 모든 회사의 데이터를 조회합니다. "
+                "시간이 오래 걸리고 서버 부담이 클 수 있으니 가능하면 품명을 지정해주세요."
+            )
+
     working_operation = None
     all_items = []
     seen_keys = set()
 
     for operation in CANDIDATE_OPERATIONS:
-        for chunk_idx, (chunk_begin, chunk_end) in enumerate(date_chunks, start=1):
-            log(
-                f"\n=== 오퍼레이션 시도: {operation} "
-                f"(구간 {chunk_idx}/{len(date_chunks)}: {chunk_begin}~{chunk_end}) ==="
-            )
-            base_params = {
-                "numOfRows": str(num_of_rows),
-                "type": "json",
-                "cntrctCorpNm": corp_name,
-                "rgstDtBgnDt": f"{chunk_begin}0000",
-                "rgstDtEndDt": f"{chunk_end}2359",
-            }
-            page_no = 1
-            total_count = None
-            chunk_item_count = 0
-            while True:
-                params = dict(base_params, pageNo=str(page_no))
-                try:
-                    result = fetch(operation, service_key, params, log=log)
-                except urllib.error.HTTPError as e:
-                    log(f"HTTP 오류: {e.code} {e.reason}")
-                    break
-                except urllib.error.URLError as e:
-                    log(f"네트워크 오류: {e.reason}")
-                    break
-                except TimeoutError as e:
-                    log(f"타임아웃 (재시도 모두 실패): {e}")
-                    break
+        for term in server_terms:
+            term_desc = "(계약업체명으로 조회)" if use_corp_scope else (term or "(품명 필터 없음)")
+            for chunk_idx, (chunk_begin, chunk_end) in enumerate(date_chunks, start=1):
+                log(
+                    f"\n=== 오퍼레이션 시도: {operation} {term_desc} "
+                    f"(구간 {chunk_idx}/{len(date_chunks)}: {chunk_begin}~{chunk_end}) ==="
+                )
+                base_params = {
+                    "numOfRows": str(num_of_rows),
+                    "type": "json",
+                    "rgstDtBgnDt": f"{chunk_begin}0000",
+                    "rgstDtEndDt": f"{chunk_end}2359",
+                }
+                if use_corp_scope:
+                    base_params["cntrctCorpNm"] = corp_name
+                elif term:
+                    base_params["prdctClsfcNoNm"] = term
+                page_no = 1
+                total_count = None
+                chunk_item_count = 0
+                while True:
+                    params = dict(base_params, pageNo=str(page_no))
+                    try:
+                        result = fetch(operation, service_key, params, log=log)
+                    except urllib.error.HTTPError as e:
+                        log(f"HTTP 오류: {e.code} {e.reason}")
+                        break
+                    except urllib.error.URLError as e:
+                        log(f"네트워크 오류: {e.reason}")
+                        break
+                    except TimeoutError as e:
+                        log(f"타임아웃 (재시도 모두 실패): {e}")
+                        break
 
-                payload = result["json"]
-                if payload is None:
-                    log("JSON이 아닌 응답 (앞부분 500자):")
-                    log(result["raw"][:500])
-                    break
+                    payload = result["json"]
+                    if payload is None:
+                        log("JSON이 아닌 응답 (앞부분 500자):")
+                        log(result["raw"][:500])
+                        break
 
-                header = payload.get("response", {}).get("header", {})
-                result_code = header.get("resultCode")
-                result_msg = header.get("resultMsg")
-                log(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
+                    header = payload.get("response", {}).get("header", {})
+                    result_code = header.get("resultCode")
+                    result_msg = header.get("resultMsg")
+                    log(f"[page {page_no}] resultCode={result_code} resultMsg={result_msg}")
 
-                if result_code not in ("00", "0", None):
-                    break
+                    if result_code not in ("00", "0", None):
+                        break
 
-                working_operation = operation
-                body = payload.get("response", {}).get("body", {})
-                if total_count is None:
-                    total_count = body.get("totalCount")
-                items = extract_items(payload)
-                log(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
-                chunk_item_count += len(items)
+                    working_operation = operation
+                    body = payload.get("response", {}).get("body", {})
+                    if total_count is None:
+                        total_count = body.get("totalCount")
+                    items = extract_items(payload)
+                    log(f"[page {page_no}] 조회된 item 수: {len(items)} (totalCount={total_count})")
+                    chunk_item_count += len(items)
 
-                new_count = 0
-                for item in items:
-                    key = json.dumps(item, sort_keys=True, ensure_ascii=False)
-                    if key not in seen_keys:
-                        seen_keys.add(key)
-                        all_items.append(item)
-                        new_count += 1
-                if new_count < len(items):
-                    log(f"  (구간 경계 중복 {len(items) - new_count}건 제외)")
+                    new_count = 0
+                    for item in items:
+                        key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            all_items.append(item)
+                            new_count += 1
+                    if new_count < len(items):
+                        log(f"  (중복 {len(items) - new_count}건 제외)")
 
-                if not items:
-                    break
-                if total_count is not None and chunk_item_count >= int(total_count):
-                    break
-                if len(items) < num_of_rows:
-                    break
-                if len(all_items) >= MAX_ITEMS:
-                    log(
-                        f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다. "
-                        "cntrctCorpNm 필터가 서버에서 적용되지 않았을 수 있습니다."
-                    )
-                    break
-                page_no += 1
-                time.sleep(1)  # 연속 요청으로 서버에 부담을 주지 않도록 짧게 대기
+                    if not items:
+                        break
+                    if total_count is not None and chunk_item_count >= int(total_count):
+                        break
+                    if len(items) < num_of_rows:
+                        break
+                    if len(all_items) >= MAX_ITEMS:
+                        log(f"경고: {MAX_ITEMS}건 이상 조회되어 중단합니다.")
+                        break
+                    page_no += 1
+                    time.sleep(1)  # 연속 요청으로 서버에 부담을 주지 않도록 짧게 대기
 
-            if chunk_idx < len(date_chunks):
-                time.sleep(1)  # 구간 사이에도 짧게 대기
+                if chunk_idx < len(date_chunks):
+                    time.sleep(1)  # 구간 사이에도 짧게 대기
 
-        if working_operation:
-            break
-
-    # 서버가 cntrctCorpNm 파라미터를 무시하고 전체 목록을 반환하는 경우에 대비해
-    # 응답에 실제로 들어있는 회사명 필드로 다시 한번 걸러낸다.
-    corp_field = next(
-        (f for f in ("cntrctCorpNm", "corpNm") if all_items and f in all_items[0]), None
-    )
-    if corp_field:
-        before = len(all_items)
-        all_items = [item for item in all_items if corp_name in str(item.get(corp_field, ""))]
-        log(
-            f"\n'{corp_field}' 필드 기준으로 '{corp_name}' 클라이언트측 재필터링: "
-            f"{before}건 -> {len(all_items)}건"
+    # 업체명으로 좁힌 경우, 서버가 cntrctCorpNm 파라미터를 무시하고 전체 목록을 반환할
+    # 가능성에 대비해 응답에 실제로 들어있는 회사명 필드로 다시 한번 걸러낸다.
+    if use_corp_scope:
+        corp_field = next(
+            (f for f in ("cntrctCorpNm", "corpNm") if all_items and f in all_items[0]), None
         )
+        if corp_field:
+            before = len(all_items)
+            all_items = [item for item in all_items if corp_name in str(item.get(corp_field, ""))]
+            log(
+                f"\n'{corp_field}' 필드 기준으로 '{corp_name}' 클라이언트측 재필터링: "
+                f"{before}건 -> {len(all_items)}건"
+            )
 
     if not working_operation:
         log(
@@ -331,8 +353,11 @@ def run_query(
     log(f"\n성공한 오퍼레이션: {working_operation}")
 
     if not all_items:
-        log(f"'{corp_name}' 이름과 일치하는 등록 물품이 없습니다.")
-        log("회사명 표기가 다를 수 있습니다(예: '(주)두원전자통신' 등). 다른 표기로 다시 시도해보세요.")
+        if use_corp_scope:
+            log(f"'{corp_name}' 이름과 일치하는 등록 물품이 없습니다.")
+            log("회사명 표기가 다를 수 있습니다(예: '(주)두원전자통신' 등). 다른 표기로 다시 시도해보세요.")
+        else:
+            log("조건과 일치하는 등록 물품이 없습니다.")
         return {"ok": False, "error": "no_matching_corp", "all_items": [],
                 "camera_items": [], "distinct_names": [], "name_field": None}
 
@@ -346,9 +371,6 @@ def run_query(
     category_counts = collections.Counter(str(item.get(name_field, "")) for item in all_items)
     all_categories = sorted(category_counts)
 
-    category_terms = [t.strip() for t in category.split(",") if t.strip()]
-    spec_terms = [t.strip() for t in spec.split(",") if t.strip()]
-
     def matches(item):
         if category_terms:
             category_text = str(item.get(NAME_FIELD, ""))
@@ -358,14 +380,22 @@ def run_query(
             spec_text = str(item.get(SPEC_FIELD, ""))
             if not all(term in spec_text for term in spec_terms):
                 return False
+        if delivery_condition:
+            dlvr_text = str(item.get(DLVR_CNDTN_FIELD, ""))
+            if delivery_condition not in dlvr_text:
+                return False
         return True
 
     camera_items = [item for item in all_items if matches(item)]
     distinct_names = sorted({str(item.get(name_field, "")) for item in camera_items})
 
-    filter_desc = f"품명(OR)={category_terms or '(없음)'}, 규격(AND)={spec_terms or '(없음)'}"
+    filter_desc = (
+        f"품명(OR)={category_terms or '(없음)'}, 규격(AND)={spec_terms or '(없음)'}, "
+        f"인도조건={delivery_condition or '(없음)'}"
+    )
 
-    log(f"\n'{corp_name}' 전체 등록 물품 수: {len(all_items)}")
+    corp_label = corp_name if use_corp_scope else "(업체명 없이 전체)"
+    log(f"\n'{corp_label}' 전체 등록 물품 수: {len(all_items)}")
     log(f"조회 기간 내 등록된 전체 품명({name_field}) 종류 ({len(all_categories)}개):")
     for cat_name in all_categories:
         log(f"  - {cat_name} ({category_counts[cat_name]}건)")
@@ -374,7 +404,7 @@ def run_query(
     if not camera_items:
         log(
             f"{filter_desc} 조건과 일치하는 물품이 없습니다. "
-            "위 전체 품명 목록에서 정확한 표기를 확인하거나, 규격 조건을 줄여보세요. "
+            "위 전체 품명 목록에서 정확한 표기를 확인하거나, 규격/인도조건을 줄여보세요. "
             "조회 기간(--begin-date/--end-date) 밖의 계약이라 안 보일 수도 있습니다."
         )
     log(f"일치하는 물품 종류(고유 {name_field} 개수): {len(distinct_names)}")
@@ -532,18 +562,30 @@ def write_output(camera_items, corp_name, category, spec, begin_date, end_date, 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--corp-name", default="두원전자통신", help="조회할 업체명")
+    parser.add_argument(
+        "--corp-name",
+        default="두원전자통신",
+        help="조회할 업체명. 비우면(--corp-name \"\") 업체명 대신 품명으로 서버 조회 범위를 "
+             "좁혀서 모든 업체의 물품을 다 보여줌",
+    )
     parser.add_argument(
         "--category",
         default="영상감시장치",
         help="품명(대분류) 필터. 쉼표로 여러 개를 넣으면 그 중 하나라도(OR) 일치하면 매칭 "
-             "(예: --category \"영상감시장치,보안용카메라\"). 비우면 전체",
+             "(예: --category \"영상감시장치,보안용카메라\"). 업체명 없이 조회할 땐 비우면 "
+             "전국 데이터를 다 받아옴(느림)",
     )
     parser.add_argument(
         "--spec",
         default="",
         help="규격/모델 필터. 쉼표로 여러 조건을 넣으면 전부(AND) 포함해야 매칭 "
              "(예: --spec \"200만화소,4배줌,블렛형\"). 비우면 필터링 안 함",
+    )
+    parser.add_argument(
+        "--delivery-condition",
+        default="현장설치도",
+        help="물품인도조건명(prdctDlvryCndtnNm) 필터. 포함되면 매칭 "
+             "(예: --delivery-condition \"현장설치도\"). 비우면 필터링 안 함",
     )
     parser.add_argument(
         "--num-of-rows",
@@ -584,6 +626,7 @@ def main():
         args.end_date,
         service_key,
         num_of_rows=args.num_of_rows,
+        delivery_condition=args.delivery_condition,
     )
 
     if not result["ok"]:

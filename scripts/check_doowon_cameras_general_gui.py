@@ -40,6 +40,7 @@ class App(tk.Tk):
         self.corp_name_var = tk.StringVar(value="두원전자통신")
         self.category_var = tk.StringVar(value="영상감시장치")
         self.spec_var = tk.StringVar(value="")
+        self.delivery_condition_var = tk.StringVar(value="현장설치도")
         today = datetime.date.today()
         self.begin_date_var = tk.StringVar(
             value=(today - datetime.timedelta(days=365)).strftime("%Y%m%d")
@@ -48,9 +49,10 @@ class App(tk.Tk):
         self.service_key_var = tk.StringVar(value=os.environ.get("DATA_GO_KR_SERVICE_KEY", ""))
 
         rows = [
-            ("업체명", self.corp_name_var, None),
+            ("업체명 (비우면 품명으로 전체 업체 조회)", self.corp_name_var, None),
             ("품명 (쉼표로 여러 개, 하나라도 일치하면 매칭)", self.category_var, None),
             ("규격 (쉼표로 여러 개, 예: 200만화소,4배줌,블렛형)", self.spec_var, None),
+            ("인도조건 (포함되면 매칭, 비우면 필터링 안 함)", self.delivery_condition_var, None),
             ("조회 시작일(YYYYMMDD)", self.begin_date_var, None),
             ("조회 종료일(YYYYMMDD)", self.end_date_var, None),
         ]
@@ -106,6 +108,7 @@ class App(tk.Tk):
         corp_name = self.corp_name_var.get().strip()
         category = self.category_var.get().strip()
         spec = self.spec_var.get().strip()
+        delivery_condition = self.delivery_condition_var.get().strip()
         begin_date = self.begin_date_var.get().strip()
         end_date = self.end_date_var.get().strip()
         service_key = self.service_key_var.get().strip()
@@ -113,9 +116,14 @@ class App(tk.Tk):
         if not service_key:
             messagebox.showerror("오류", "서비스키를 입력해주세요.")
             return
-        if not corp_name:
-            messagebox.showerror("오류", "업체명을 입력해주세요.")
-            return
+        if not corp_name and not category:
+            proceed = messagebox.askyesno(
+                "확인",
+                "업체명과 품명을 둘 다 비워두면 전국 모든 회사의 데이터를 조회합니다"
+                "(느릴 수 있음). 계속하시겠습니까?",
+            )
+            if not proceed:
+                return
         # 품명/규격을 둘 다 비워두면 해당 회사의 전체 등록 물품을 가져온다.
 
         self.log_widget.configure(state="normal")
@@ -126,15 +134,18 @@ class App(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_in_background,
-            args=(corp_name, category, spec, begin_date, end_date, service_key),
+            args=(corp_name, category, spec, delivery_condition, begin_date, end_date, service_key),
             daemon=True,
         )
         self.worker.start()
 
-    def _run_in_background(self, corp_name, category, spec, begin_date, end_date, service_key):
+    def _run_in_background(
+        self, corp_name, category, spec, delivery_condition, begin_date, end_date, service_key,
+    ):
         try:
             result = core.run_query(
-                corp_name, category, spec, begin_date, end_date, service_key, log=self._log
+                corp_name, category, spec, begin_date, end_date, service_key,
+                delivery_condition=delivery_condition, log=self._log,
             )
             saved_path = None
             if result["ok"]:
