@@ -48,7 +48,13 @@ BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 STAGE1_OPERATION = "getThptyUcntrctPrdctInfoList"  # 제3자계약 품목정보 조회 (계약번호 알아내기용)
 STAGE2_OPERATION = "getShoppingMallPrdctInfoList"  # 나라장터 쇼핑몰 품목 정보 목록 조회 (전체 물품)
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    # PyInstaller 등으로 실행파일(.exe)로 묶인 경우, __file__은 임시 압축해제 폴더를
+    # 가리켜서 그 기준으로 저장하면 프로그램 종료 후 파일이 사라진다. 이때는 실행파일
+    # 자체가 있는 폴더를 기준으로 삼는다.
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _resolve_output_path(path: str) -> str:

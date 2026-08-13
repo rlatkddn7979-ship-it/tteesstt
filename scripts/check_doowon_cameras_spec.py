@@ -46,7 +46,13 @@ BASE_URL = "https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService"
 
 # 스크립트를 어떤 방식으로 실행하든(더블클릭 등) 현재 작업 폴더가 예상과 다를 수 있으므로,
 # 파일명만 주어졌을 때는 이 스크립트 파일이 있는 폴더를 기준으로 저장한다.
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    # PyInstaller 등으로 실행파일(.exe)로 묶인 경우, __file__은 임시 압축해제 폴더를
+    # 가리켜서 그 기준으로 저장하면 프로그램 종료 후 파일이 사라진다. 이때는 실행파일
+    # 자체가 있는 폴더를 기준으로 삼는다.
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _resolve_output_path(path: str) -> str:
