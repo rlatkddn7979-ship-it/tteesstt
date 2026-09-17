@@ -10,10 +10,12 @@
 실행 (Python으로):
     python3 scripts/launcher.py
 
-실행파일(.exe) 하나로 묶기 (Windows에서, 이 scripts 폴더 안에서 실행):
-    pip install pyinstaller openpyxl requests beautifulsoup4
-    pyinstaller --onefile --noconsole --name 두원전자통신물품조회 launcher.py
-    -> dist\\두원전자통신물품조회.exe 가 생성됩니다. 이 exe 파일 하나만 배포하면
+실행파일(.exe) 하나로 묶기 (Windows에서, 이 scripts 폴더 안에서 build_exe.bat 실행):
+    build_exe.bat 을 더블클릭하면 pip install과 PyInstaller 빌드를 자동으로 해줍니다.
+    직접 명령어로 하고 싶다면:
+        pip install pyinstaller openpyxl requests beautifulsoup4
+        pyinstaller --onefile --noconsole --name doowon_product_lookup launcher.py
+    -> dist\\doowon_product_lookup.exe 가 생성됩니다. 이 exe 파일 하나만 배포하면
        Python이 안 깔린 PC에서도 실행할 수 있습니다 (curl은 Windows 10/11에
        기본 내장되어 있어서 별도로 챙길 필요 없습니다).
 
